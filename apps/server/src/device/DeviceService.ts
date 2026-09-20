@@ -691,13 +691,17 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         ),
       );
     const hubShutdown = postShutdown("/api/devices/shutdown", { platform, id: deviceId });
-    // serve-sim's shutdown closes its in-process capture session before powering
-    // off; the hub's generic shutdown can leave that session cached across a
-    // reboot. serve-sim runs `simctl shutdown` bare, though, so a simulator that
-    // is already off fails there and the hub route, which tolerates that, takes over.
+    // serve-sim's shutdown closes its in-process capture session before it runs
+    // `simctl shutdown`; the hub's generic shutdown can leave that session cached
+    // across a reboot. serve-sim runs simctl bare, though, so a simulator that is
+    // already off fails there and the hub route, which tolerates that, takes over.
     yield* platform === "ios"
       ? postShutdown(`${vendorPrefix("ios")}/grid/api/shutdown`, { udid: deviceId }).pipe(
-          Effect.catch(() => hubShutdown),
+          Effect.catch((cause) =>
+            Effect.logWarning("serve-sim shutdown failed; retrying through the device hub", {
+              cause,
+            }).pipe(Effect.andThen(hubShutdown)),
+          ),
         )
       : hubShutdown;
     yield* publish((state) => ({
