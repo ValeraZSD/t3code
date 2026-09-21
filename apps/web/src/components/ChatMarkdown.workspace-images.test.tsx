@@ -172,6 +172,20 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).not.toContain("Image unavailable");
   });
 
+  it("loads a workspace path with spaces an agent wrote unquoted", () => {
+    const html = render("![Settings → General](D:\\my projects\\demo shots\\cmp-side-by-side.png)");
+
+    expect(testState.resources).toEqual([
+      {
+        _tag: "media-file",
+        threadId: threadRef.threadId,
+        path: "D:\\my projects\\demo shots\\cmp-side-by-side.png",
+      },
+    ]);
+    expect(html).toContain("https://signed.test/workspace-image.svg");
+    expect(html).not.toContain("Image unavailable");
+  });
+
   it("normalizes a drive-absolute src in raw image HTML", () => {
     const html = render(String.raw`<img src="D:\screens\workspace-image.svg" alt="raw">`);
 

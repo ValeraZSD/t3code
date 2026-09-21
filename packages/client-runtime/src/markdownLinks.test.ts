@@ -5,6 +5,7 @@ import {
   inlineCodeFilePathCandidate,
   parseFileUrlHref,
   parseMarkdownFileLink,
+  repairMarkdownImageDestinations,
   splitFilePathPosition,
   workspaceRelativeFilePath,
 } from "./markdownLinks.ts";
@@ -166,5 +167,63 @@ describe("workspaceRelativeFilePath", () => {
     ["/repo/project/a.ts", undefined, null],
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {
     expect(workspaceRelativeFilePath(path, workspaceRoot)).toBe(relativePath);
+  });
+});
+
+describe("repairMarkdownImageDestinations", () => {
+  it("angle-quotes a Windows path with spaces an agent wrote as the destination", () => {
+    const markdown = "![Settings → General](D:\\my projects\\demo shots\\cmp-side-by-side.png)";
+    expect(repairMarkdownImageDestinations(markdown)).toBe(
+      "![Settings → General](<D:\\my projects\\demo shots\\cmp-side-by-side.png>)",
+    );
+  });
+
+  it("angle-quotes a POSIX path with spaces and keeps its hash", () => {
+    expect(repairMarkdownImageDestinations("![chart](/tmp/my charts/growth.png#L2)")).toBe(
+      "![chart](</tmp/my charts/growth.png#L2>)",
+    );
+  });
+
+  it("angle-quotes every image on a line and holds balanced parens in the destination", () => {
+    expect(
+      repairMarkdownImageDestinations("![a](C:\\pics\\Screenshot (1).png) ![b](/tmp/x y.png)"),
+    ).toBe("![a](<C:\\pics\\Screenshot (1).png>) ![b](</tmp/x y.png>)");
+  });
+
+  it("leaves destinations that parse on their own as written", () => {
+    expect(repairMarkdownImageDestinations("![shot](shots/cmp.png)")).toBe(
+      "![shot](shots/cmp.png)",
+    );
+    expect(repairMarkdownImageDestinations("![shot](<shots/a b.png>)")).toBe(
+      "![shot](<shots/a b.png>)",
+    );
+    expect(repairMarkdownImageDestinations('![shot](shots/a.png "Title")')).toBe(
+      '![shot](shots/a.png "Title")',
+    );
+    expect(repairMarkdownImageDestinations("![shot](shots/'a b'.png)")).toBe(
+      "![shot](shots/'a b'.png)",
+    );
+  });
+
+  it("leaves prose without a path separator as written", () => {
+    expect(repairMarkdownImageDestinations("![figure](one and two)")).toBe(
+      "![figure](one and two)",
+    );
+  });
+
+  it("leaves fenced code, inline code, and link syntax alone", () => {
+    const markdown = [
+      "```text",
+      "![a](C:\\dir with spaces\\a.png)",
+      "```",
+      "`![b](C:\\d e\\b.png)`",
+      "[docs](C:\\d e\\docs.md)",
+    ].join("\n");
+    expect(repairMarkdownImageDestinations(markdown)).toBe(markdown);
+  });
+
+  it("keeps an unclosed fence inert to the end", () => {
+    const markdown = "```text\n![a](C:\\d e\\a.png)";
+    expect(repairMarkdownImageDestinations(markdown)).toBe(markdown);
   });
 });

@@ -1,6 +1,8 @@
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 const SLASH_PREFIXED_WINDOWS_DRIVE_PATTERN = /^\/[A-Za-z]:[\\/]/;
+const IMAGE_OPEN_PATTERN = /!\[([^\][\n]*)\]\(/g;
+const FENCE_LINE_PATTERN = /^ {0,3}(`{3,}|~{3,})/;
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 const RELATIVE_FILE_PATH_PATTERN =
   /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
@@ -338,4 +340,132 @@ export function workspaceRelativeFilePath(
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
   if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
   return normalizedPath.slice(normalizedRoot.length + 1);
+}
+
+interface CodeSpan {
+  readonly start: number;
+  readonly end: number;
+}
+
+function inlineCodeSpans(line: string): CodeSpan[] {
+  const spans: CodeSpan[] = [];
+  let index = 0;
+  while (index < line.length) {
+    if (line[index] === "\\") {
+      index += 2;
+      continue;
+    }
+    if (line[index] !== "`") {
+      index += 1;
+      continue;
+    }
+    let runEnd = index;
+    while (line[runEnd] === "`") runEnd += 1;
+    const delimiter = line.slice(index, runEnd);
+    const close = line.indexOf(delimiter, runEnd);
+    if (close < 0) {
+      // An unterminated opener takes the rest of the line.
+      spans.push({ start: index, end: line.length });
+      break;
+    }
+    spans.push({ start: index, end: close + delimiter.length });
+    index = close + delimiter.length;
+  }
+  return spans;
+}
+
+function linkDestinationEnd(line: string, openParenIndex: number): number {
+  let depth = 1;
+  for (let index = openParenIndex + 1; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === "(") depth += 1;
+    if (character === ")") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function isRepairableImageDestination(destination: string): boolean {
+  // Only a whitespace-bearing path shape is repaired; a destination that
+  // already parses, quotes a title, or reads as prose is left as written
+  // rather than guessed at.
+  if (!/\s/.test(destination)) return false;
+  if (destination.includes('"') || destination.includes("'")) return false;
+  if (destination.includes("<") || destination.includes(">")) return false;
+  return destination.includes("/") || destination.includes("\\");
+}
+
+function repairImageDestinationsOnLine(line: string): string {
+  const codeSpans = inlineCodeSpans(line);
+  let output = "";
+  let copiedFrom = 0;
+  IMAGE_OPEN_PATTERN.lastIndex = 0;
+  let match = IMAGE_OPEN_PATTERN.exec(line);
+  while (match !== null) {
+    const matchIndex = match.index;
+    const openParenIndex = matchIndex + match[0].length - 1;
+    const closeParenIndex = linkDestinationEnd(line, openParenIndex);
+    const inCode = codeSpans.some((span) => matchIndex >= span.start && matchIndex < span.end);
+    if (closeParenIndex >= 0 && !inCode) {
+      const destination = line.slice(openParenIndex + 1, closeParenIndex);
+      if (isRepairableImageDestination(destination)) {
+        output += `${line.slice(copiedFrom, openParenIndex + 1)}<${destination}>`;
+        copiedFrom = closeParenIndex;
+        IMAGE_OPEN_PATTERN.lastIndex = closeParenIndex + 1;
+      }
+    }
+    match = IMAGE_OPEN_PATTERN.exec(line);
+  }
+  if (copiedFrom === 0) return line;
+  return output + line.slice(copiedFrom);
+}
+
+/**
+ * Angle-quotes image destinations a parser would reject. CommonMark ends an
+ * unquoted destination at the first space, so an agent writing
+ * `![shot](C:\dir with spaces\a.png)` delivers the whole line as literal
+ * text — the renderer never sees an image, and every workspace-path relay
+ * and preview this app already builds for that destination goes unused. An
+ * angle-quoted destination is the CommonMark form that holds spaces, and
+ * both clients already unwrap `<...>` when classifying, so the rewrite is
+ * invisible downstream. Fenced code, inline code, and destinations that
+ * parse on their own are left exactly as written, and link syntax is left
+ * for a separate pass.
+ */
+export function repairMarkdownImageDestinations(markdown: string): string {
+  if (!markdown.includes("![") || !/\s/.test(markdown)) return markdown;
+
+  const lines = markdown.split("\n");
+  let fenceCharacter: string | null = null;
+  let fenceLength = 0;
+  let repaired = false;
+  for (const [index, line] of lines.entries()) {
+    const fence = FENCE_LINE_PATTERN.exec(line);
+    if (fence !== null) {
+      const marker = fence[1];
+      const character = marker?.[0];
+      if (marker !== undefined && character !== undefined) {
+        if (fenceCharacter === null) {
+          fenceCharacter = character;
+          fenceLength = marker.length;
+        } else if (
+          character === fenceCharacter &&
+          marker.length >= fenceLength &&
+          marker === line.trim()
+        ) {
+          fenceCharacter = null;
+        }
+      }
+      continue;
+    }
+    if (fenceCharacter !== null) continue;
+    const next = repairImageDestinationsOnLine(line);
+    if (next !== line) {
+      lines[index] = next;
+      repaired = true;
+    }
+  }
+  return repaired ? lines.join("\n") : markdown;
 }
