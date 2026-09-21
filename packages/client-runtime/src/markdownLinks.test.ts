@@ -186,6 +186,12 @@ describe("repairMarkdownImageDestinations", () => {
     );
   });
 
+  it("keeps a UNC path's leading pair of separators", () => {
+    expect(repairMarkdownImageDestinations(String.raw`![a](\\server\share\my shots\a b.png)`)).toBe(
+      String.raw`![a](<\\\\server\\share\\my shots\\a b.png>)`,
+    );
+  });
+
   it("angle-quotes a POSIX path with spaces and keeps its hash", () => {
     expect(repairMarkdownImageDestinations("![chart](/tmp/my charts/growth.png#L2)")).toBe(
       "![chart](</tmp/my charts/growth.png#L2>)",
