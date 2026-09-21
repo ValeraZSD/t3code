@@ -10,8 +10,25 @@ const IMAGE_OPEN_PATTERN = new RegExp(
 const FENCE_LINE_PATTERN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const FENCE_CLOSE_PATTERN = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
 const INDENTED_CODE_PATTERN = /^(?: {4}|\t)/;
-const RAW_HTML_BLOCK_OPEN_PATTERN = /^ {0,3}<(?:pre|script|style|textarea)(?:[\s/>]|$)/i;
-const RAW_HTML_BLOCK_CLOSE_PATTERN = /<\/(?:pre|script|style|textarea)>/i;
+// CommonMark's block tag list, which is what separates an HTML block from a
+// paragraph that happens to open with a tag.
+const HTML_BLOCK_TAGS =
+  "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
+const HTML_BLOCKS = [
+  {
+    start: /^ {0,3}<\/?(?:pre|script|style|textarea)(?:[\s/>]|$)/i,
+    end: /<\/(?:pre|script|style|textarea)>/i,
+  },
+  { start: /^ {0,3}<!--/, end: /-->/ },
+  { start: /^ {0,3}<\?/, end: /\?>/ },
+  { start: /^ {0,3}<!\[CDATA\[/, end: /\]\]>/ },
+  { start: /^ {0,3}<![A-Za-z]/, end: />/ },
+  { start: new RegExp(`^ {0,3}</?(?:${HTML_BLOCK_TAGS})(?:[\\s/>]|$)`, "i"), end: "blank" },
+] as const;
+// A complete tag alone on its line is a block too, but only where a block can
+// start — inside a paragraph it is ordinary inline HTML.
+const HTML_BLOCK_STANDALONE_TAG_PATTERN =
+  /^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*?)?\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>)[ \t]*$/;
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 const RELATIVE_FILE_PATH_PATTERN =
   /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
@@ -516,6 +533,21 @@ function closesFence(line: string, fence: OpenFence): boolean {
   return marker[0] === fence.character && marker.length >= fence.length;
 }
 
+type HtmlBlockEnd = RegExp | "blank";
+
+/**
+ * The condition that ends the raw HTML block this line opens, or null. All
+ * seven CommonMark forms: Markdown inside any of them is shown as written, so
+ * repairing there would rewrite what the reader is meant to see.
+ */
+function htmlBlockEnd(line: string, insideParagraph: boolean): HtmlBlockEnd | null {
+  for (const block of HTML_BLOCKS) {
+    if (block.start.test(line)) return block.end;
+  }
+  if (!insideParagraph && HTML_BLOCK_STANDALONE_TAG_PATTERN.test(line)) return "blank";
+  return null;
+}
+
 /**
  * Angle-quotes image destinations a parser would reject. CommonMark ends an
  * unquoted destination at the first space, so an agent writing
@@ -536,7 +568,7 @@ export function repairMarkdownImageDestinations(markdown: string): string {
   const repairedLines = [...lines];
   let blockLines: number[] = [];
   let fence: OpenFence | null = null;
-  let inRawHtmlBlock = false;
+  let htmlEnd: HtmlBlockEnd | null = null;
   let inIndentedCode = false;
   let repaired = false;
 
@@ -556,13 +588,16 @@ export function repairMarkdownImageDestinations(markdown: string): string {
     blockLines = [];
   };
 
-  for (const [index, line] of lines.entries()) {
+  for (const [index, rawLine] of lines.entries()) {
+    // A CRLF document keeps its `\r`; the line patterns must not see it, and
+    // the line itself keeps it so the text is rewritten and not reformatted.
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     if (fence !== null) {
       if (closesFence(line, fence)) fence = null;
       continue;
     }
-    if (inRawHtmlBlock) {
-      if (RAW_HTML_BLOCK_CLOSE_PATTERN.test(line)) inRawHtmlBlock = false;
+    if (htmlEnd !== null) {
+      if (htmlEnd === "blank" ? line.trim() === "" : htmlEnd.test(line)) htmlEnd = null;
       continue;
     }
     if (line.trim() === "") {
@@ -577,14 +612,17 @@ export function repairMarkdownImageDestinations(markdown: string): string {
       inIndentedCode = false;
       continue;
     }
-    if (RAW_HTML_BLOCK_OPEN_PATTERN.test(line)) {
+    const html = htmlBlockEnd(line, blockLines.length > 0);
+    if (html !== null) {
       flushBlock();
-      inRawHtmlBlock = !RAW_HTML_BLOCK_CLOSE_PATTERN.test(line);
+      htmlEnd = html !== "blank" && html.test(line) ? null : html;
       inIndentedCode = false;
       continue;
     }
     // Four spaces are code only where a block can start; the same indent
     // under a paragraph is a continuation line, and that is ordinary text.
+    // An unindented line ends the code block it was carrying.
+    if (!INDENTED_CODE_PATTERN.test(line)) inIndentedCode = false;
     if (inIndentedCode || (blockLines.length === 0 && INDENTED_CODE_PATTERN.test(line))) {
       inIndentedCode = true;
       continue;

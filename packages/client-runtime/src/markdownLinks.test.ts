@@ -274,11 +274,43 @@ describe("repairMarkdownImageDestinations", () => {
     expect(repairMarkdownImageDestinations(markdown)).toBe(markdown);
   });
 
+  it("leaves every CommonMark HTML block alone", () => {
+    for (const markdown of [
+      "<div>\n" + String.raw`![x](/tmp/a b.png)` + "\n</div>",
+      String.raw`<!-- ![x](/tmp/a b.png) -->`,
+      "<![CDATA[\n" + String.raw`![x](/tmp/a b.png)` + "\n]]>",
+      "<table>\n<tr><td>\n" + String.raw`![x](/tmp/a b.png)` + "\n</td></tr>\n</table>",
+    ]) {
+      expect(repairMarkdownImageDestinations(markdown)).toBe(markdown);
+    }
+  });
+
+  it("repairs a paragraph that opens with an inline tag", () => {
+    // `em` is not a block tag and the tag is not alone on the line, so this is
+    // a paragraph and the image in it is live Markdown.
+    expect(repairMarkdownImageDestinations("<em>hi</em> ![x](/tmp/a b.png)")).toBe(
+      "<em>hi</em> ![x](</tmp/a b.png>)",
+    );
+  });
+
+  it("closes a fence and repairs past it in a CRLF document", () => {
+    const markdown = "```text\r\n" + String.raw`![a](C:\d e\a.png)` + "\r\n```\r\n";
+    expect(repairMarkdownImageDestinations(markdown + String.raw`![b](/tmp/c d.png)`)).toBe(
+      markdown + String.raw`![b](</tmp/c d.png>)`,
+    );
+  });
+
   it("leaves a raw HTML block alone", () => {
     const inline = String.raw`<pre>![x](C:\d e\x.png)</pre>`;
     expect(repairMarkdownImageDestinations(inline)).toBe(inline);
     const block = ["<pre>", String.raw`![x](C:\d e\x.png)`, "</pre>"].join("\n");
     expect(repairMarkdownImageDestinations(block)).toBe(block);
+  });
+
+  it("ends an indented code block at the first unindented line", () => {
+    expect(repairMarkdownImageDestinations("    code\n" + String.raw`![x](/tmp/a b.png)`)).toBe(
+      "    code\n" + String.raw`![x](</tmp/a b.png>)`,
+    );
   });
 
   it("leaves an indented code block alone but repairs a paragraph's own lines", () => {
