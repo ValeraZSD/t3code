@@ -172,9 +172,17 @@ describe("workspaceRelativeFilePath", () => {
 
 describe("repairMarkdownImageDestinations", () => {
   it("angle-quotes a Windows path with spaces an agent wrote as the destination", () => {
-    const markdown = "![Settings → General](D:\\my projects\\demo shots\\cmp-side-by-side.png)";
+    const markdown = String.raw`![Settings → General](D:\my projects\demo shots\cmp.png)`;
     expect(repairMarkdownImageDestinations(markdown)).toBe(
-      "![Settings → General](<D:\\my projects\\demo shots\\cmp-side-by-side.png>)",
+      String.raw`![Settings → General](<D:\\my projects\\demo shots\\cmp.png>)`,
+    );
+  });
+
+  it("doubles the backslashes so a path segment starting with punctuation survives", () => {
+    // `\.` and `\_` are escapes inside a destination: written once, the parser
+    // hands back `D:\shots.cache\a b.png` and the file is never found.
+    expect(repairMarkdownImageDestinations(String.raw`![a](D:\shots\.cache\_x\a b.png)`)).toBe(
+      String.raw`![a](<D:\\shots\\.cache\\_x\\a b.png>)`,
     );
   });
 
@@ -186,8 +194,25 @@ describe("repairMarkdownImageDestinations", () => {
 
   it("angle-quotes every image on a line and holds balanced parens in the destination", () => {
     expect(
-      repairMarkdownImageDestinations("![a](C:\\pics\\Screenshot (1).png) ![b](/tmp/x y.png)"),
-    ).toBe("![a](<C:\\pics\\Screenshot (1).png>) ![b](</tmp/x y.png>)");
+      repairMarkdownImageDestinations(
+        String.raw`![a](C:\pics\Screenshot (1).png) ![b](/tmp/x y.png)`,
+      ),
+    ).toBe(String.raw`![a](<C:\\pics\\Screenshot (1).png>) ![b](</tmp/x y.png>)`);
+  });
+
+  it("keeps a parenthesis escaped inside the destination", () => {
+    expect(repairMarkdownImageDestinations(String.raw`![x](C:\dir with spaces\report\).png)`)).toBe(
+      String.raw`![x](<C:\\dir with spaces\\report\\).png>)`,
+    );
+  });
+
+  it("repairs alt text carrying escaped and nested brackets", () => {
+    expect(repairMarkdownImageDestinations(String.raw`![see \[this\]](/tmp/a b.png)`)).toBe(
+      String.raw`![see \[this\]](</tmp/a b.png>)`,
+    );
+    expect(repairMarkdownImageDestinations("![a [b] c](/tmp/a b.png)")).toBe(
+      "![a [b] c](</tmp/a b.png>)",
+    );
   });
 
   it("leaves destinations that parse on their own as written", () => {
@@ -214,16 +239,55 @@ describe("repairMarkdownImageDestinations", () => {
   it("leaves fenced code, inline code, and link syntax alone", () => {
     const markdown = [
       "```text",
-      "![a](C:\\dir with spaces\\a.png)",
+      String.raw`![a](C:\dir with spaces\a.png)`,
       "```",
-      "`![b](C:\\d e\\b.png)`",
-      "[docs](C:\\d e\\docs.md)",
+      "`" + String.raw`![b](C:\d e\b.png)` + "`",
+      String.raw`[docs](C:\d e\docs.md)`,
     ].join("\n");
     expect(repairMarkdownImageDestinations(markdown)).toBe(markdown);
   });
 
   it("keeps an unclosed fence inert to the end", () => {
-    const markdown = "```text\n![a](C:\\d e\\a.png)";
+    const markdown = "```text\n" + String.raw`![a](C:\d e\a.png)`;
     expect(repairMarkdownImageDestinations(markdown)).toBe(markdown);
+  });
+
+  it("leaves a code span that closes on a later line alone", () => {
+    const markdown = ["`literal", String.raw`![x](C:\d e\x.png)`, "text`"].join("\n");
+    expect(repairMarkdownImageDestinations(markdown)).toBe(markdown);
+  });
+
+  it("repairs past a backtick that never closes, because it is literal text", () => {
+    expect(
+      repairMarkdownImageDestinations(String.raw`a ` + "`" + String.raw` ![x](/tmp/a b.png)`),
+    ).toBe(String.raw`a ` + "`" + String.raw` ![x](</tmp/a b.png>)`);
+  });
+
+  it("leaves an escaped image marker alone", () => {
+    const markdown = String.raw`\![x](C:\d e\x.png)`;
+    expect(repairMarkdownImageDestinations(markdown)).toBe(markdown);
+  });
+
+  it("leaves a raw HTML block alone", () => {
+    const inline = String.raw`<pre>![x](C:\d e\x.png)</pre>`;
+    expect(repairMarkdownImageDestinations(inline)).toBe(inline);
+    const block = ["<pre>", String.raw`![x](C:\d e\x.png)`, "</pre>"].join("\n");
+    expect(repairMarkdownImageDestinations(block)).toBe(block);
+  });
+
+  it("leaves an indented code block alone but repairs a paragraph's own lines", () => {
+    const code = "text\n\n" + String.raw`    ![x](C:\d e\x.png)`;
+    expect(repairMarkdownImageDestinations(code)).toBe(code);
+    expect(repairMarkdownImageDestinations("text\n" + String.raw`    ![x](/tmp/a b.png)`)).toBe(
+      "text\n" + String.raw`    ![x](</tmp/a b.png>)`,
+    );
+  });
+
+  it("repairs under a line that only looks like a fence", () => {
+    // A backtick fence's info string may not contain a backtick, so the line
+    // below opens no fence and the image under it is live Markdown.
+    expect(
+      repairMarkdownImageDestinations("```js`x\n" + String.raw`![a](/tmp/a b.png)` + "\n```"),
+    ).toBe("```js`x\n" + String.raw`![a](</tmp/a b.png>)` + "\n```");
   });
 });

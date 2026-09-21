@@ -51,6 +51,7 @@ import {
 } from "@t3tools/client-runtime/markdown-images";
 import {
   inlineCodeFilePathCandidate,
+  markdownImageDestination,
   repairMarkdownImageDestinations,
 } from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
@@ -1303,7 +1304,10 @@ function markdownImageCopy(alt: string, src: string, title: string | undefined):
   const escapedAlt = alt.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
   const titleSuffix =
     title === undefined ? "" : ` "${title.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-  return `![${escapedAlt}](${src}${titleSuffix})`;
+  // ReactMarkdown hands back the parsed source, so a path with a space
+  // arrives here unquoted and would paste as text that no other Markdown
+  // reader renders as an image.
+  return `![${escapedAlt}](${markdownImageDestination(src)}${titleSuffix})`;
 }
 
 /**
@@ -3291,7 +3295,7 @@ function ChatMarkdown({
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
 }: ChatMarkdownProps) {
-  const repairedText = repairMarkdownImageDestinations(text);
+  const repairedText = useMemo(() => repairMarkdownImageDestinations(text), [text]);
   const {
     componentState,
     handleCopy,
