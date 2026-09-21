@@ -29,6 +29,10 @@ const HTML_BLOCKS = [
 // start — inside a paragraph it is ordinary inline HTML.
 const HTML_BLOCK_STANDALONE_TAG_PATTERN =
   /^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*?)?\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>)[ \t]*$/;
+// A heading or a thematic break is a leaf block: it ends on its own line, so
+// the paragraph it looked like it was continuing is closed after it.
+const PARAGRAPH_ENDING_LINE_PATTERN =
+  /^ {0,3}(?:#{1,6}(?:[ \t]|$)|=+[ \t]*$|(?:\*[ \t]*){3,}$|(?:-[ \t]*){3,}$|(?:_[ \t]*){3,}$)/;
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 const RELATIVE_FILE_PATH_PATTERN =
   /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
@@ -628,6 +632,9 @@ export function repairMarkdownImageDestinations(markdown: string): string {
       continue;
     }
     blockLines.push(index);
+    // A heading can hold an image, so it is repaired — but nothing after it is
+    // a continuation of it, and the next line may open a block of its own.
+    if (PARAGRAPH_ENDING_LINE_PATTERN.test(line)) flushBlock();
   }
   flushBlock();
 

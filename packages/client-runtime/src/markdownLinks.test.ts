@@ -285,6 +285,27 @@ describe("repairMarkdownImageDestinations", () => {
     }
   });
 
+  it("knows a heading ends the paragraph a tag could not interrupt", () => {
+    // A standalone tag opens an HTML block only where a block can start, and a
+    // heading or thematic break above it ends the line's block.
+    for (const before of ["# H", "---", "H\n==="]) {
+      const markdown = `${before}\n<x>\n` + String.raw`![x](/tmp/a b.png)`;
+      expect(repairMarkdownImageDestinations(markdown)).toBe(markdown);
+    }
+    // A paragraph or a list item above it is still open, so these are text.
+    for (const before of ["text", "- item"]) {
+      expect(
+        repairMarkdownImageDestinations(`${before}\n<x>\n` + String.raw`![x](/tmp/a b.png)`),
+      ).toBe(`${before}\n<x>\n` + String.raw`![x](</tmp/a b.png>)`);
+    }
+  });
+
+  it("repairs an image inside a heading", () => {
+    expect(repairMarkdownImageDestinations(String.raw`# ![x](/tmp/a b.png)`)).toBe(
+      String.raw`# ![x](</tmp/a b.png>)`,
+    );
+  });
+
   it("repairs a paragraph that opens with an inline tag", () => {
     // `em` is not a block tag and the tag is not alone on the line, so this is
     // a paragraph and the image in it is live Markdown.
