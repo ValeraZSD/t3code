@@ -1348,7 +1348,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       }),
   );
 
-  it.effect("keeps open questions in the command read model it starts from", () =>
+  it.effect("keeps open questions and approvals in the command read model it starts from", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
       const sql = yield* SqlClient.SqlClient;
@@ -1409,7 +1409,21 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           (
             'answer', 'thread-answered', NULL, 'info', 'user-input.resolved', 'Answered',
             '{"requestId":"request-answered"}', 2, '2026-04-01T00:00:05.000Z'
+          ),
+          (
+            'approval-open', 'thread-asking', NULL, 'approval', 'approval.requested', 'Approve',
+            '{"requestId":"approval-open"}', 3, '2026-04-01T00:00:06.000Z'
           )
+      `;
+      yield* sql`DELETE FROM projection_pending_approvals`;
+      yield* sql`
+        INSERT INTO projection_pending_approvals (
+          request_id, thread_id, turn_id, status, decision, created_at, resolved_at
+        )
+        VALUES (
+          'approval-open', 'thread-asking', NULL, 'pending', NULL,
+          '2026-04-01T00:00:06.000Z', NULL
+        )
       `;
 
       const readModel = yield* snapshotQuery.getCommandReadModel();
@@ -1417,7 +1431,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         readModel.threads
           .find((thread) => thread.id === ThreadId.make(threadId))
           ?.activities.map((activity) => activity.id);
-      assert.deepEqual(activityIds("thread-asking"), [asEventId("question-open")]);
+      assert.deepEqual(activityIds("thread-asking"), [
+        asEventId("question-open"),
+        asEventId("approval-open"),
+      ]);
       assert.deepEqual(activityIds("thread-answered"), []);
     }),
   );
