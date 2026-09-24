@@ -6,10 +6,22 @@ export type ThreadFeedLiveFollowEvent =
       readonly userScrollSessionActive: boolean;
     }
   | {
-      readonly type: "scroll" | "disclosure-settled";
+      readonly type: "scroll";
+      readonly isAtEnd: boolean;
+      readonly userScrollSessionActive: boolean;
+      readonly scroll: number;
+      // The offset at which the session's drag took hold of a following feed,
+      // or null when the session started away from the end.
+      readonly heldEndScroll: number | null;
+    }
+  | {
+      readonly type: "disclosure-settled";
       readonly isAtEnd: boolean;
       readonly userScrollSessionActive: boolean;
     };
+
+// LegendList's own at-end tolerance.
+const HELD_END_EPSILON_PX = 1;
 
 export interface ThreadWorkGroupScrollPosition {
   readonly rowId: string;
@@ -81,9 +93,13 @@ export function resolveThreadFeedLiveFollow(
       // A drag suspends end maintenance instead of pausing follow, so touching
       // down at the end, or pulling past it, does not read as scrolling away.
       // Only a drag that actually leaves the end pauses; reaching the end again
-      // mid-drag re-arms only once the session is over.
+      // mid-drag re-arms only once the session is over. Streamed rows can move
+      // the end away from a held drag, so leaving is measured from the offset
+      // where the drag took hold, not from the end itself.
       if (event.userScrollSessionActive) {
-        return current && event.isAtEnd;
+        const heldInPlace =
+          event.heldEndScroll !== null && event.scroll >= event.heldEndScroll - HELD_END_EPSILON_PX;
+        return current && (event.isAtEnd || heldInPlace);
       }
       if (event.isAtEnd) {
         return true;

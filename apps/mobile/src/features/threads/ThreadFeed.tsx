@@ -1993,6 +1993,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // maintenance pauses for the session so a stream update cannot pull the
   // reader back between touch-down and their drag leaving the end.
   const [userScrollHoldsEnd, setUserScrollHoldsEnd] = useState(false);
+  const heldEndScrollRef = useRef<number | null>(null);
   const setEndFollow = useCallback(
     (enabled: boolean) => {
       if (endFollowEnabledRef.current === enabled) {
@@ -2350,6 +2351,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           type: "scroll",
           isAtEnd: listState.isAtEnd,
           userScrollSessionActive: userScrollSessionRef.current,
+          scroll: listState.scroll,
+          heldEndScroll: heldEndScrollRef.current,
         });
       }
     },
@@ -2367,10 +2370,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     // Hold end maintenance before the first scroll event. Follow itself pauses
     // only if the drag leaves the end, so the scroll-to-end control does not
     // appear under a reader who is holding the feed at its end.
+    heldEndScrollRef.current = endFollowEnabledRef.current
+      ? (props.listRef.current?.getState().scroll ?? null)
+      : null;
     if (endFollowEnabledRef.current) {
       setUserScrollHoldsEnd(true);
     }
-  }, [clearUserScrollSettle]);
+  }, [clearUserScrollSettle, props.listRef]);
   const finishUserScroll = useCallback(
     (releaseIsAtEnd?: boolean) => {
       clearUserScrollSettle();
@@ -2385,6 +2391,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         userScrollSessionActive,
       });
       setUserScrollHoldsEnd(false);
+      heldEndScrollRef.current = null;
       // A drag that held the end while the stream grew below it releases short
       // of the new end, possibly beyond the threshold end maintenance re-pins.
       if (
