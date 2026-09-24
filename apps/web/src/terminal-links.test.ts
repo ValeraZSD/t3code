@@ -98,6 +98,12 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
+  it("keeps a trailing colon on URLs", () => {
+    expect(extractTerminalLinks("GET https://example.test/items/foo:")).toEqual([
+      { kind: "url", text: "https://example.test/items/foo:", start: 4, end: 35 },
+    ]);
+  });
+
   it.each([
     ["./main.go:10:5: undefined: x", "./main.go:10:5"],
     ["/home/dev/app/src/main.c:10:5: error: expected ';'", "/home/dev/app/src/main.c:10:5"],
