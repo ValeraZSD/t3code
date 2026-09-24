@@ -266,6 +266,7 @@ import {
   rankPullRequestMatches,
 } from "../pullRequest/pullRequestList.logic";
 import {
+  resolveComposerArgumentHint,
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
@@ -6876,6 +6877,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPageScrollRelease={onPageScrollRelease}
                     onCitationSubmitAndSend={submitCitationAndSend}
                     onPaste={onComposerPaste}
+                    argumentHint={
+                      isComposerApprovalState || activePendingProgress
+                        ? null
+                        : resolveComposerArgumentHint(
+                            prompt,
+                            selectedProviderSlashCommands,
+                            selectedProviderSkills,
+                          )
+                    }
                     placeholder={
                       isComposerApprovalState
                         ? "Resolve this approval request to continue"
