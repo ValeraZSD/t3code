@@ -433,13 +433,19 @@ export function isRichTextBoldShortcut(event: ShortcutEventLike): boolean {
 }
 
 /** Mod+Shift+S, which Tiptap's strikethrough binds in the rich-text composer. */
-export function isRichTextStrikeShortcut(event: ShortcutEventLike): boolean {
+export function isRichTextStrikeShortcut(
+  event: ShortcutEventLike,
+  platform = navigator.platform,
+): boolean {
   if (event.type !== undefined && event.type !== "keydown") {
     return false;
   }
+  // Tiptap's Mod is Cmd on macOS and Ctrl elsewhere; the other one is not Mod.
+  const mac = isMacPlatform(platform);
   return (
     resolveEventKeys(event).has("s") &&
-    (event.metaKey || event.ctrlKey) &&
+    event.metaKey === mac &&
+    event.ctrlKey === !mac &&
     event.shiftKey &&
     !event.altKey
   );

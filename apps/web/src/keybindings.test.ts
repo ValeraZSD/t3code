@@ -1089,7 +1089,7 @@ describe("isRichTextBoldShortcut", () => {
 describe("isRichTextStrikeShortcut", () => {
   it("matches Mod+Shift+S, the chord thread.settle also uses", () => {
     const strike = event({ key: "S", ctrlKey: true, shiftKey: true });
-    assert.isTrue(isRichTextStrikeShortcut(strike));
+    assert.isTrue(isRichTextStrikeShortcut(strike, "Win32"));
     assert.strictEqual(
       resolveShortcutCommand(
         strike,
@@ -1101,17 +1101,35 @@ describe("isRichTextStrikeShortcut", () => {
       "thread.settle",
     );
     assert.isTrue(
-      isRichTextStrikeShortcut(event({ key: "Ы", code: "KeyS", metaKey: true, shiftKey: true })),
+      isRichTextStrikeShortcut(
+        event({ key: "Ы", code: "KeyS", metaKey: true, shiftKey: true }),
+        "MacIntel",
+      ),
+    );
+  });
+
+  it("only treats the platform's Mod key as Tiptap's Mod", () => {
+    assert.isFalse(
+      isRichTextStrikeShortcut(event({ key: "S", ctrlKey: true, shiftKey: true }), "MacIntel"),
+    );
+    assert.isFalse(
+      isRichTextStrikeShortcut(event({ key: "S", metaKey: true, shiftKey: true }), "Win32"),
     );
   });
 
   it("ignores unshifted, alted, and non-keydown presses", () => {
-    assert.isFalse(isRichTextStrikeShortcut(event({ key: "s", ctrlKey: true })));
+    assert.isFalse(isRichTextStrikeShortcut(event({ key: "s", ctrlKey: true }), "Win32"));
     assert.isFalse(
-      isRichTextStrikeShortcut(event({ key: "S", ctrlKey: true, shiftKey: true, altKey: true })),
+      isRichTextStrikeShortcut(
+        event({ key: "S", ctrlKey: true, shiftKey: true, altKey: true }),
+        "Win32",
+      ),
     );
     assert.isFalse(
-      isRichTextStrikeShortcut(event({ type: "keyup", key: "S", ctrlKey: true, shiftKey: true })),
+      isRichTextStrikeShortcut(
+        event({ type: "keyup", key: "S", ctrlKey: true, shiftKey: true }),
+        "Win32",
+      ),
     );
   });
 });
