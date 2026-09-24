@@ -87,13 +87,12 @@ it.layer(NodeServices.layer)("revert decider", (it) => {
   it.effect("accepts a revert when no turn is running", () =>
     Effect.gen(function* () {
       for (const status of [null, "ready", "stopped", "error"] as const) {
-        const event = yield* decideOrchestrationCommand({
+        const result = yield* decideOrchestrationCommand({
           command: revert("thread.checkpoint.revert"),
           readModel: makeReadModel(status),
         });
-        expect(Array.isArray(event) ? event[0]?.type : event.type).toBe(
-          "thread.checkpoint-revert-requested",
-        );
+        const events = Array.isArray(result) ? result : [result];
+        expect(events.map((event) => event.type)).toEqual(["thread.checkpoint-revert-requested"]);
       }
     }),
   );
