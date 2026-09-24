@@ -1348,6 +1348,41 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       }),
   );
 
+  it.effect("finds a Windows project whatever the drive letter case or separator", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, default_model_selection_json, scripts_json,
+          created_at, updated_at, deleted_at
+        )
+        VALUES
+          (
+            'project-windows', 'Repo', ${"C:\\Users\\dev\\Repo"}, NULL, '[]',
+            '2026-03-01T00:00:00.000Z', '2026-03-01T00:00:01.000Z', NULL
+          ),
+          (
+            'project-gone', 'Gone', ${"C:\\Users\\dev\\Gone"}, NULL, '[]',
+            '2026-03-01T00:00:02.000Z', '2026-03-01T00:00:03.000Z', '2026-03-01T00:00:04.000Z'
+          )
+      `;
+
+      for (const cwd of ["C:\\Users\\dev\\Repo", "c:\\users\\dev\\repo", "c:/Users/dev/Repo/"]) {
+        const project = yield* snapshotQuery.getActiveProjectByWorkspaceRoot(cwd);
+        assert.equal(project._tag, "Some", cwd);
+        if (project._tag === "Some") {
+          assert.equal(project.value.id, asProjectId("project-windows"));
+        }
+      }
+
+      const deleted = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("c:\\users\\dev\\gone");
+      assert.equal(deleted._tag, "None");
+    }),
+  );
+
   it.effect("measures replay payload bytes without decoding event bodies", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
