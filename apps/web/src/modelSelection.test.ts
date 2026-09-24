@@ -15,6 +15,7 @@ import {
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
+  resolveEffectiveDefaultModelSelection,
   resolvePlanAgentHealPatch,
   withoutPlanAgentSelection,
 } from "./modelSelection";
@@ -912,5 +913,47 @@ describe("resolvePlanAgentHealPatch", () => {
         sourceControlWriterModelSelection: storedPlan,
       }),
     ).toEqual({ sourceControlWriterModelSelection: healed });
+  });
+});
+
+describe("resolveEffectiveDefaultModelSelection", () => {
+  const driver = ProviderDriverKind.make("claudeAgent");
+  const instanceId = ProviderInstanceId.make("claudeAgent");
+  const providers = [
+    provider({
+      provider: driver,
+      instanceId: "claudeAgent",
+      models: ["claude-opus-5-5", "claude-opus-5"],
+    }),
+  ];
+  const stored = createModelSelection(instanceId, "claude-opus-5", [
+    { id: "effort", value: "high" },
+  ]);
+  const hiding = (hiddenModels: string[]): UnifiedSettings => ({
+    ...settingsWithProviderInstances(),
+    providerModelPreferences: { [instanceId]: { hiddenModels, modelOrder: [] } },
+  });
+
+  it("resolves a hidden stored default to the model a new thread gets", () => {
+    const settings = hiding(["claude-opus-5"]);
+    const newThread = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: stored,
+      projectModelSelection: stored,
+      settings,
+    });
+
+    const effective = resolveEffectiveDefaultModelSelection(settings, providers, stored);
+
+    expect(effective.model).toBe("claude-opus-5-5");
+    expect(effective.model).toBe(newThread.selectedModel);
+    expect(effective.options).toEqual(stored.options);
+  });
+
+  it("keeps a visible stored default as it is", () => {
+    expect(resolveEffectiveDefaultModelSelection(hiding([]), providers, stored)).toBe(stored);
   });
 });
