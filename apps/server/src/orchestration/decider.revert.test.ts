@@ -1,10 +1,12 @@
 import {
   CommandId,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSession,
+  type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -14,7 +16,10 @@ import { decideOrchestrationCommand } from "./decider.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 
-function makeReadModel(status: OrchestrationSession["status"] | null): OrchestrationReadModel {
+function makeReadModel(
+  status: OrchestrationSession["status"] | null,
+  messages: OrchestrationThread["messages"] = [],
+): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [],
@@ -39,7 +44,7 @@ function makeReadModel(status: OrchestrationSession["status"] | null): Orchestra
         snoozedAt: null,
         pinnedAt: null,
         deletedAt: null,
-        messages: [],
+        messages,
         proposedPlans: [],
         activities: [],
         checkpoints: [],
@@ -81,6 +86,27 @@ it.layer(NodeServices.layer)("revert decider", (it) => {
           expect(error).toMatchObject({ _tag: "OrchestrationCommandInvariantError" });
         }
       }
+    }),
+  );
+
+  it.effect("rejects a revert while a sent message has not started its turn yet", () =>
+    Effect.gen(function* () {
+      // The decider's clock is the Effect test clock, pinned to the epoch, so
+      // this message was sent 30 seconds ago and no turn has picked it up.
+      const justSent: OrchestrationThread["messages"][number] = {
+        id: MessageId.make("message-queued"),
+        role: "user",
+        text: "Continue",
+        turnId: null,
+        streaming: false,
+        createdAt: "1969-12-31T23:59:30.000Z",
+        updatedAt: "1969-12-31T23:59:30.000Z",
+      };
+      const error = yield* decideOrchestrationCommand({
+        command: revert("thread.checkpoint.revert"),
+        readModel: makeReadModel("ready", [justSent]),
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "OrchestrationCommandInvariantError" });
     }),
   );
 

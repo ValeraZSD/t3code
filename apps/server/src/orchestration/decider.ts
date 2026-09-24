@@ -1804,7 +1804,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       });
       // Clients check this too, but another client or a queued send can
       // start a turn first; restoring files under a live agent races it.
-      if (thread.session?.status === "starting" || thread.session?.status === "running") {
+      if (
+        thread.session?.status === "starting" ||
+        thread.session?.status === "running" ||
+        hasQueuedTurnStartForThread(thread, yield* nowIso)
+      ) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: "Interrupt the current turn before reverting checkpoints.",
