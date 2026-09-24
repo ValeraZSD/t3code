@@ -156,6 +156,7 @@ import {
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import {
+  isScrollPastFeedEnd,
   resolveThreadFeedLiveFollow,
   type ThreadFeedLiveFollowEvent,
   type ThreadWorkGroupScrollPosition,
@@ -2342,14 +2343,29 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       // remains inside LegendList's at-end tolerance.
       const listState = props.listRef.current?.getState();
       if (listState) {
+        const { contentInset, contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
         transitionEndFollow({
           type: "scroll",
           isAtEnd: listState.isAtEnd,
+          isPastEnd: isScrollPastFeedEnd({
+            contentOffset: contentOffset.y,
+            viewportLength: layoutMeasurement.height,
+            contentLength: contentSize.height,
+            contentInsetEnd: contentInset?.bottom ?? 0,
+            adjustedInsetEnd: usesNativeAutomaticInsets ? insets.bottom : 0,
+          }),
           userScrollSessionActive: userScrollSessionRef.current,
         });
       }
     },
-    [reportHeaderMaterialVisibility, anchorTopInset, props.listRef, transitionEndFollow],
+    [
+      reportHeaderMaterialVisibility,
+      anchorTopInset,
+      insets.bottom,
+      props.listRef,
+      transitionEndFollow,
+      usesNativeAutomaticInsets,
+    ],
   );
   const clearUserScrollSettle = useCallback(() => {
     if (userScrollSettleTimerRef.current !== null) {

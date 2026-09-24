@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isScrollPastFeedEnd,
   resolveThreadFeedLiveFollow,
   resolveThreadFeedSubmissionAnchor,
   resolveThreadWorkGroupInitialScroll,
@@ -144,6 +145,50 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
   });
 });
 
+describe("isScrollPastFeedEnd", () => {
+  // Android: no inset is ever reported, and the composer overlay is padding
+  // inside the content, so the feed rests at contentLength - viewportLength.
+  const android = { contentLength: 4_000, viewportLength: 900, contentInsetEnd: 0 };
+  // iOS: the keyboard integration writes the composer inset natively and UIKit
+  // adds the safe-area bottom on top of it without reporting that anywhere.
+  const ios = { contentLength: 4_000, viewportLength: 900, contentInsetEnd: 174 };
+
+  it("reads a stretched feed as past its end", () => {
+    expect(isScrollPastFeedEnd({ ...android, contentOffset: 3_220, adjustedInsetEnd: 0 })).toBe(
+      true,
+    );
+  });
+
+  it("reads the resting end as the end", () => {
+    expect(isScrollPastFeedEnd({ ...android, contentOffset: 3_100, adjustedInsetEnd: 0 })).toBe(
+      false,
+    );
+  });
+
+  it("reads a feed scrolled back through its history as short of the end", () => {
+    expect(isScrollPastFeedEnd({ ...android, contentOffset: 800, adjustedInsetEnd: 0 })).toBe(
+      false,
+    );
+  });
+
+  it("does not read a native inset as an overshoot", () => {
+    expect(isScrollPastFeedEnd({ ...ios, contentOffset: 3_308, adjustedInsetEnd: 34 })).toBe(false);
+    expect(isScrollPastFeedEnd({ ...ios, contentOffset: 3_368, adjustedInsetEnd: 34 })).toBe(true);
+  });
+
+  it("treats a thread shorter than the viewport as the end", () => {
+    expect(
+      isScrollPastFeedEnd({
+        contentLength: 500,
+        viewportLength: 900,
+        contentInsetEnd: 0,
+        adjustedInsetEnd: 0,
+        contentOffset: 0,
+      }),
+    ).toBe(true);
+  });
+});
+
 describe("resolveThreadFeedLiveFollow", () => {
   it("pauses immediately when the user starts scrolling", () => {
     expect(resolveThreadFeedLiveFollow(true, { type: "user-scroll-begin" })).toBe(false);
@@ -154,6 +199,7 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(false, {
         type: "scroll",
         isAtEnd: false,
+        isPastEnd: false,
         userScrollSessionActive: true,
       }),
     ).toBe(false);
@@ -164,6 +210,7 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(true, {
         type: "scroll",
         isAtEnd: false,
+        isPastEnd: false,
         userScrollSessionActive: false,
       }),
     ).toBe(true);
@@ -174,9 +221,21 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(false, {
         type: "scroll",
         isAtEnd: true,
+        isPastEnd: false,
         userScrollSessionActive: true,
       }),
     ).toBe(false);
+  });
+
+  it("follows again while the reader holds the feed past its end", () => {
+    expect(
+      resolveThreadFeedLiveFollow(false, {
+        type: "scroll",
+        isAtEnd: true,
+        isPastEnd: true,
+        userScrollSessionActive: true,
+      }),
+    ).toBe(true);
   });
 
   it.each([
