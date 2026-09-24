@@ -1,45 +1,15 @@
 export type ThreadFeedLiveFollowEvent =
   | { readonly type: "reset" }
-  | { readonly type: "user-scroll-begin" }
   | {
       readonly type: "user-scroll-end";
       readonly isAtEnd: boolean;
       readonly userScrollSessionActive: boolean;
     }
   | {
-      readonly type: "scroll";
-      readonly isAtEnd: boolean;
-      readonly isPastEnd: boolean;
-      readonly userScrollSessionActive: boolean;
-    }
-  | {
-      readonly type: "disclosure-settled";
+      readonly type: "scroll" | "disclosure-settled";
       readonly isAtEnd: boolean;
       readonly userScrollSessionActive: boolean;
     };
-
-// Both platforms let a reader pull the feed past its own last row: Android
-// stretches and springs back, UIKit bounces. The list rests at the end again by
-// itself, so the overshoot is only ever a gesture in progress.
-const END_OVERSCROLL_EPSILON = 1;
-
-export function isScrollPastFeedEnd(input: {
-  readonly contentOffset: number;
-  readonly viewportLength: number;
-  readonly contentLength: number;
-  // The scroll event's own inset. Android always reports zero and keeps the
-  // composer overlay in the content itself, so its resting end is exactly
-  // contentLength - viewportLength.
-  readonly contentInsetEnd: number;
-  // UIKit's automatic behavior adds the safe-area bottom on top of that raw
-  // inset without reporting it anywhere in the event, which is the same extra
-  // contentInsetEndStaticAdjustment feeds to the list's own scroll math.
-  readonly adjustedInsetEnd: number;
-}): boolean {
-  const restingEnd =
-    input.contentLength - input.viewportLength + input.contentInsetEnd + input.adjustedInsetEnd;
-  return input.contentOffset - restingEnd > END_OVERSCROLL_EPSILON;
-}
 
 export interface ThreadWorkGroupScrollPosition {
   readonly rowId: string;
@@ -101,24 +71,19 @@ export function resolveThreadFeedLiveFollow(
   switch (event.type) {
     case "reset":
       return true;
-    case "user-scroll-begin":
-      return false;
     case "user-scroll-end":
-      return event.userScrollSessionActive ? event.isAtEnd : current;
+      // Still following means the session never left the end, even if the
+      // feed grew below it while the drag held end maintenance off.
+      return event.userScrollSessionActive ? current || event.isAtEnd : current;
     case "disclosure-settled":
       return !event.userScrollSessionActive && event.isAtEnd;
     case "scroll":
-      // Past the end is not an escape from it. A live session normally outranks
-      // the list's at-end report, because that report's tolerance is wide enough
-      // for a streaming chunk to pull a reader back before their upward drag
-      // clears it — but an overshoot can only be a pull toward the end, and
-      // pausing there leaves a scroll-to-end control pointing at the very place
-      // the reader is holding the feed.
-      if (event.isPastEnd) {
-        return true;
-      }
+      // A drag suspends end maintenance instead of pausing follow, so touching
+      // down at the end, or pulling past it, does not read as scrolling away.
+      // Only a drag that actually leaves the end pauses; reaching the end again
+      // mid-drag re-arms only once the session is over.
       if (event.userScrollSessionActive) {
-        return false;
+        return current && event.isAtEnd;
       }
       if (event.isAtEnd) {
         return true;
