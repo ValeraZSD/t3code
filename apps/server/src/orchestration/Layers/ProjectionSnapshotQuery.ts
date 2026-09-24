@@ -1812,18 +1812,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
-  const pinnedThreadActivityIdsCte = (threadId: string) => sql`
+  // Without a thread id, covers every thread (the command read model at startup).
+  const pinnedThreadActivityIdsCte = (threadId: string | undefined) => {
+    const threadFilter = threadId === undefined ? sql`1 = 1` : sql`thread_id = ${threadId}`;
+    return sql`
 pending_approval_requests AS (
           SELECT request_id, thread_id
           FROM projection_pending_approvals
-          WHERE thread_id = ${threadId}
+          WHERE ${threadFilter}
             AND status = 'pending'
         ),
         pending_approval_activities AS (
           SELECT
             activity.activity_id,
             ROW_NUMBER() OVER (
-              PARTITION BY pending.request_id
+              PARTITION BY pending.thread_id, pending.request_id
               ORDER BY activity.created_at DESC, activity.activity_id DESC
             ) AS request_order
           FROM pending_approval_requests AS pending
@@ -1835,7 +1838,7 @@ pending_approval_requests AS (
         pending_user_input_thread AS (
           SELECT thread_id
           FROM projection_threads
-          WHERE thread_id = ${threadId}
+          WHERE ${threadFilter}
             AND pending_user_input_count > 0
         ),
         user_input_lifecycle AS (
@@ -1843,7 +1846,7 @@ pending_approval_requests AS (
             activity.activity_id,
             activity.kind,
             ROW_NUMBER() OVER (
-              PARTITION BY json_extract(activity.payload_json, '$.requestId')
+              PARTITION BY activity.thread_id, json_extract(activity.payload_json, '$.requestId')
               ORDER BY activity.created_at DESC, activity.activity_id DESC
             ) AS request_order
           FROM pending_user_input_thread AS pending
@@ -1878,6 +1881,7 @@ pending_approval_requests AS (
             AND kind = 'user-input.requested'
         )
   `;
+  };
 
   // Blocking request payloads must remain available even if they predate the
   // recent activity window. Each CTE returns at most one unresolved row per
@@ -1913,6 +1917,29 @@ pending_approval_requests AS (
         WITH ${pinnedThreadActivityIdsCte(threadId)}
         SELECT activity_id AS "activityId"
         FROM pinned_activity_ids
+      `,
+  });
+
+  const listAllPinnedThreadActivityRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: () =>
+      sql`
+        WITH ${pinnedThreadActivityIdsCte(undefined)}
+        SELECT
+          activity.activity_id AS "activityId",
+          activity.thread_id AS "threadId",
+          activity.turn_id AS "turnId",
+          activity.tone,
+          activity.kind,
+          activity.summary,
+          activity.payload_json AS "payload",
+          activity.sequence,
+          activity.created_at AS "createdAt"
+        FROM pinned_activity_ids AS pinned
+        INNER JOIN projection_thread_activities AS activity
+          ON activity.activity_id = pinned.activity_id
+        ORDER BY activity.created_at ASC, activity.activity_id ASC
       `,
   });
 
@@ -2433,6 +2460,14 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          listAllPinnedThreadActivityRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listPinnedActivities:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listPinnedActivities:decodeRows",
+              ),
+            ),
+          ),
         ]),
       )
       .pipe(
@@ -2445,8 +2480,18 @@ pending_approval_requests AS (
             sessionRows,
             latestTurnRows,
             stateRows,
+            pinnedActivityRows,
           ]) =>
             Effect.gen(function* () {
+              // Activities are omitted here except open approvals and
+              // questions, which the decider needs to settle or snooze a
+              // thread correctly; the live projector keeps those too.
+              const pinnedActivitiesByThread = new Map<ThreadId, OrchestrationThreadActivity[]>();
+              for (const row of pinnedActivityRows) {
+                const activities = pinnedActivitiesByThread.get(row.threadId) ?? [];
+                activities.push(mapThreadActivityRow(row));
+                pinnedActivitiesByThread.set(row.threadId, activities);
+              }
               const linkedThreadIds = new Set(pullRequestRows.map((row) => row.threadId));
               const linkedProjectIds = new Set(
                 threadRows
@@ -2591,7 +2636,7 @@ pending_approval_requests AS (
                   deletedAt: row.deletedAt,
                   messages: [],
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
-                  activities: [],
+                  activities: pinnedActivitiesByThread.get(row.threadId) ?? [],
                   checkpoints: [],
                   session: sessionByThread.get(row.threadId) ?? null,
                 });
