@@ -5435,6 +5435,12 @@ export default function ChatView(props: ChatViewProps) {
     timelineEntries,
     timelineLiveFollowEnabled,
   ]);
+  // Outlives the listener effect below, which reattaches whenever the
+  // composer inset changes, possibly in the middle of a wheel run.
+  const wheelLatchRef = useRef(createTimelineWheelLatch());
+  useEffect(() => {
+    wheelLatchRef.current = createTimelineWheelLatch();
+  }, [activeThread?.id]);
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -5467,11 +5473,11 @@ export default function ChatView(props: ChatViewProps) {
         // otherwise break follow with no scroll event left to re-arm it.
         const viewportIsAwayFromEnd = () =>
           resolveTimelineIsAtEnd(legendListRef.current?.getState()) === false;
-        const wheelLatch = createTimelineWheelLatch();
         // Only an upward wheel is a navigation intent; wheeling down while
         // following either does nothing (at the end) or moves toward it.
         const handleWheel = (event: WheelEvent) => {
-          if (event.ctrlKey || !latchTimelineWheelTarget(wheelLatch, event, scrollNode)) return;
+          if (event.ctrlKey || !latchTimelineWheelTarget(wheelLatchRef.current, event, scrollNode))
+            return;
           if (event.deltaY > 0) {
             timelineScrollIntentRef.current = "toward-end";
             if (isAtEndRef.current) {

@@ -4889,12 +4889,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
       const scrollNode = getTimelineScrollableNode();
       if (!scrollNode) return;
-      const targetsTimeline = latchTimelineWheelTarget(wheelLatch, event, scrollNode);
-      if (
-        !scrollNode.contains(event.target) &&
-        !composerScrollGestureRef.current.collapseSuppressed
-      )
-        return;
+      // Only timeline events may start or extend a run, as in ChatView, whose
+      // listener sits on the timeline itself.
+      const insideTimeline = scrollNode.contains(event.target);
+      if (!insideTimeline && !composerScrollGestureRef.current.collapseSuppressed) return;
+      const targetsTimeline =
+        insideTimeline && latchTimelineWheelTarget(wheelLatch, event, scrollNode);
 
       if (composerScrollCollapseTimeoutRef.current !== null) {
         window.clearTimeout(composerScrollCollapseTimeoutRef.current);
