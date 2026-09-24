@@ -149,6 +149,9 @@ interface CursorSessionContext {
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
+  /** Resolved by interruptTurn; a prompt of that turn still queued behind
+   * the running one (a steer) is dropped instead of reaching the agent. */
+  turnInterrupted: Deferred.Deferred<void>;
   assistantReply: CursorTransportFailure;
   stopped: boolean;
 }
@@ -801,6 +804,7 @@ export function makeCursorAdapter(
             activeTurnId: undefined,
             cursorSkillNames: undefined,
             promptsInFlight: 0,
+            turnInterrupted: yield* Deferred.make<void>(),
             assistantReply: new CursorTransportFailure(),
             stopped: false,
           };
@@ -976,6 +980,10 @@ export function makeCursorAdapter(
         // resolving from here on does not settle the turn; the matching
         // decrement is the `ensuring` below.
         ctx.promptsInFlight += 1;
+        if (steeringTurnId === undefined) {
+          ctx.turnInterrupted = yield* Deferred.make<void>();
+        }
+        const turnInterrupted = ctx.turnInterrupted;
 
         return yield* Effect.gen(function* () {
           const turnModelSelection =
@@ -1102,6 +1110,15 @@ export function makeCursorAdapter(
                   ],
             })
             .pipe(
+              // The runtime sends prompts one at a time, so a steer waits
+              // behind the running prompt. If the turn is interrupted while it
+              // waits, it must not be sent once the cancelled prompt frees
+              // the slot.
+              Effect.raceFirst(
+                Deferred.await(turnInterrupted).pipe(
+                  Effect.as({ stopReason: "cancelled" } satisfies EffectAcpSchema.PromptResponse),
+                ),
+              ),
               Effect.mapError((error) =>
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
               ),
@@ -1165,6 +1182,7 @@ export function makeCursorAdapter(
     const interruptTurn: CursorAdapterShape["interruptTurn"] = (threadId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
+        yield* Deferred.succeed(ctx.turnInterrupted, undefined);
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         yield* Effect.ignore(
