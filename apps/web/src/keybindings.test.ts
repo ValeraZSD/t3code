@@ -15,6 +15,7 @@ import {
   formatShortcutLabel,
   isDiffToggleShortcut,
   isRichTextBoldShortcut,
+  isRichTextStrikeShortcut,
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
   isOpenFavoriteEditorShortcut,
@@ -1082,6 +1083,36 @@ describe("isRichTextBoldShortcut", () => {
     assert.isFalse(isRichTextBoldShortcut(event({ key: "b" })));
     assert.isFalse(isRichTextBoldShortcut(event({ key: "i", metaKey: true })));
     assert.isFalse(isRichTextBoldShortcut(event({ type: "keyup", key: "b", metaKey: true })));
+  });
+});
+
+describe("isRichTextStrikeShortcut", () => {
+  it("matches Mod+Shift+S, the chord thread.settle also uses", () => {
+    const strike = event({ key: "S", ctrlKey: true, shiftKey: true });
+    assert.isTrue(isRichTextStrikeShortcut(strike));
+    assert.strictEqual(
+      resolveShortcutCommand(
+        strike,
+        compile([{ shortcut: modShortcut("s", { shiftKey: true }), command: "thread.settle" }]),
+        {
+          platform: "Win32",
+        },
+      ),
+      "thread.settle",
+    );
+    assert.isTrue(
+      isRichTextStrikeShortcut(event({ key: "Ы", code: "KeyS", metaKey: true, shiftKey: true })),
+    );
+  });
+
+  it("ignores unshifted, alted, and non-keydown presses", () => {
+    assert.isFalse(isRichTextStrikeShortcut(event({ key: "s", ctrlKey: true })));
+    assert.isFalse(
+      isRichTextStrikeShortcut(event({ key: "S", ctrlKey: true, shiftKey: true, altKey: true })),
+    );
+    assert.isFalse(
+      isRichTextStrikeShortcut(event({ type: "keyup", key: "S", ctrlKey: true, shiftKey: true })),
+    );
   });
 });
 
