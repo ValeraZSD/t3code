@@ -976,13 +976,16 @@ export function makeCursorAdapter(
         // reused instead of opening a new turn.
         const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
         const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
+        const nextTurnInterrupted = yield* Deferred.make<void>();
         // Count this prompt immediately so a superseded in-flight prompt
         // resolving from here on does not settle the turn; the matching
-        // decrement is the `ensuring` below.
-        ctx.promptsInFlight += 1;
-        if (steeringTurnId === undefined) {
-          ctx.turnInterrupted = yield* Deferred.make<void>();
+        // decrement is the `ensuring` below. The first prompt of a turn
+        // installs its interrupt signal in the same synchronous step, so
+        // every send that sees a positive count shares that signal.
+        if (ctx.promptsInFlight === 0) {
+          ctx.turnInterrupted = nextTurnInterrupted;
         }
+        ctx.promptsInFlight += 1;
         const turnInterrupted = ctx.turnInterrupted;
 
         return yield* Effect.gen(function* () {

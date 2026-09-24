@@ -479,15 +479,18 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const firstTurnFiber = yield* adapter
         .sendTurn({ threadId, input: "run 5 commands", attachments: [] })
         .pipe(Effect.forkChild);
+      // Wait until the agent has the first prompt, so the steer queues behind it.
       yield* Effect.gen(function* () {
-        for (let attempt = 0; attempt < 200; attempt += 1) {
-          const sessions = yield* adapter.listSessions();
-          if (sessions.find((entry) => entry.threadId === threadId)?.activeTurnId !== undefined) {
+        for (let attempt = 0; attempt < 500; attempt += 1) {
+          const requests = yield* Effect.promise(() =>
+            readJsonLines(requestLogPath).catch(() => []),
+          );
+          if (requests.some((entry) => entry.method === "session/prompt")) {
             return;
           }
           yield* TestClock.adjust("10 millis");
         }
-        throw new Error("Timed out waiting for the first prompt to be in flight.");
+        throw new Error("Timed out waiting for the first prompt to reach the agent.");
       });
 
       const steerFiber = yield* adapter
