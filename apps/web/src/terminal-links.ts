@@ -34,7 +34,7 @@ export interface WrappedTerminalLinkLine {
 const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
 const FILE_PATH_PATTERN =
   /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
-const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
+const TRAILING_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
 
 function trimClosingDelimiters(value: string): string {
   let output = value.replace(TRAILING_PUNCTUATION_PATTERN, "");
