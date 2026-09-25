@@ -1367,14 +1367,23 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           (
             'project-gone', 'Gone', ${"C:\\Users\\dev\\Gone"}, NULL, '[]',
             '2026-03-01T00:00:02.000Z', '2026-03-01T00:00:03.000Z', '2026-03-01T00:00:04.000Z'
+          ),
+          (
+            'project-unc', 'Share', ${"\\\\server\\share\\Repo"}, NULL, '[]',
+            '2026-03-01T00:00:05.000Z', '2026-03-01T00:00:06.000Z', NULL
           )
       `;
 
-      for (const cwd of ["C:\\Users\\dev\\Repo", "c:\\users\\dev\\repo", "c:/Users/dev/Repo/"]) {
+      for (const [cwd, expectedId] of [
+        ["C:\\Users\\dev\\Repo", "project-windows"],
+        ["c:\\users\\dev\\repo", "project-windows"],
+        ["c:/Users/dev/Repo/", "project-windows"],
+        ["//server/share/repo", "project-unc"],
+      ] as const) {
         const project = yield* snapshotQuery.getActiveProjectByWorkspaceRoot(cwd);
         assert.equal(project._tag, "Some", cwd);
         if (project._tag === "Some") {
-          assert.equal(project.value.id, asProjectId("project-windows"));
+          assert.equal(project.value.id, asProjectId(expectedId));
         }
       }
 
