@@ -941,7 +941,7 @@ describe("resolveEffectiveDefaultModelSelection", () => {
       providers,
       selectedProvider: driver,
       selectedInstanceId: instanceId,
-      threadModelSelection: stored,
+      threadModelSelection: null,
       projectModelSelection: stored,
       settings,
     });
@@ -955,5 +955,37 @@ describe("resolveEffectiveDefaultModelSelection", () => {
 
   it("keeps a visible stored default as it is", () => {
     expect(resolveEffectiveDefaultModelSelection(hiding([]), providers, stored)).toBe(stored);
+  });
+
+  it("falls back from an unavailable stored default like a new thread does", () => {
+    const opencodeInstance = ProviderInstanceId.make("opencode_work");
+    const opencodeDriver = ProviderDriverKind.make("opencode");
+    const opencodeProviders = [
+      provider({ provider: opencodeDriver, instanceId: "opencode_work", models: ["gpt-5.6-sol"] }),
+    ];
+    const storedCustom = createModelSelection(opencodeInstance, "openrouter/kimi-k3");
+    const settings = {
+      ...settingsWithProviderInstances(),
+      providerModelPreferences: { [opencodeInstance]: { hiddenModels: [], modelOrder: [] } },
+    } as UnifiedSettings;
+
+    const newThread = deriveEffectiveComposerModelState({
+      draft: null,
+      providers: opencodeProviders,
+      selectedProvider: opencodeDriver,
+      selectedInstanceId: opencodeInstance,
+      threadModelSelection: null,
+      projectModelSelection: storedCustom,
+      settings,
+    });
+
+    const effective = resolveEffectiveDefaultModelSelection(
+      settings,
+      opencodeProviders,
+      storedCustom,
+    );
+
+    expect(effective.model).toBe("gpt-5.6-sol");
+    expect(effective.model).toBe(newThread.selectedModel);
   });
 });

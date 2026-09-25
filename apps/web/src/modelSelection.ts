@@ -339,7 +339,6 @@ export function resolveEffectiveDefaultModelSelection(
     settings,
     providers,
     selection.model,
-    { preserveUnavailableSelection: true },
   );
   return model === null || model === selection.model ? selection : { ...selection, model };
 }
