@@ -40,6 +40,11 @@ export interface Preferences {
     readonly provider: ProviderInstanceId;
     readonly model: string;
   }>;
+  /** Models this device keeps out of the picker, like web's `hiddenModels`. */
+  readonly hiddenModels?: ReadonlyArray<{
+    readonly provider: ProviderInstanceId;
+    readonly model: string;
+  }>;
   /** Fresh keys reset both shelves to collapsed when users update. */
   readonly threadListSettledShelfExpanded?: boolean;
   readonly threadListSnoozedShelfExpanded?: boolean;
@@ -82,6 +87,17 @@ export class MobilePreferencesStore extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
 
+function isModelEntry(entry: { readonly provider: unknown; readonly model: unknown }): boolean {
+  return (
+    typeof entry === "object" &&
+    entry !== null &&
+    typeof entry.provider === "string" &&
+    entry.provider.length > 0 &&
+    typeof entry.model === "string" &&
+    entry.model.trim().length > 0
+  );
+}
+
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     liveActivitiesEnabled?: boolean;
@@ -101,6 +117,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingMode?: SidebarProjectGroupingMode;
     planModeEnabled?: boolean;
     modelFavorites?: Preferences["modelFavorites"];
+    hiddenModels?: Preferences["hiddenModels"];
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
   } = {};
@@ -171,15 +188,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.planModeEnabled = parsed.planModeEnabled;
   }
   if (Array.isArray(parsed.modelFavorites)) {
-    preferences.modelFavorites = parsed.modelFavorites.filter(
-      (favorite) =>
-        typeof favorite === "object" &&
-        favorite !== null &&
-        typeof favorite.provider === "string" &&
-        favorite.provider.length > 0 &&
-        typeof favorite.model === "string" &&
-        favorite.model.trim().length > 0,
-    );
+    preferences.modelFavorites = parsed.modelFavorites.filter(isModelEntry);
+  }
+  if (Array.isArray(parsed.hiddenModels)) {
+    preferences.hiddenModels = parsed.hiddenModels.filter(isModelEntry);
   }
   if (typeof parsed.threadListSettledShelfExpanded === "boolean") {
     preferences.threadListSettledShelfExpanded = parsed.threadListSettledShelfExpanded;

@@ -7,9 +7,10 @@ import {
   canCommitPendingModel,
   favoritesFirst,
   modelFavoriteKey,
+  modelIsListed,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
-  toggleModelFavorite,
+  toggleModelEntry,
 } from "./thread-settings-sheet-state";
 
 function modelOption(
@@ -66,13 +67,35 @@ describe("thread settings sheet state", () => {
       key: modelFavoriteKey(otherProvider, "shared"),
       selection: { ...codexModel.selection, instanceId: otherProvider },
     };
-    const favorites = toggleModelFavorite([], codexModel);
+    const favorites = toggleModelEntry([], codexModel);
 
-    expect(toggleModelFavorite(favorites, personalModel)).toEqual([
+    expect(toggleModelEntry(favorites, personalModel)).toEqual([
       { provider: ProviderInstanceId.make("codex"), model: "shared" },
       { provider: otherProvider, model: "shared" },
     ]);
-    expect(toggleModelFavorite(favorites, codexModel)).toEqual([]);
+    expect(toggleModelEntry(favorites, codexModel)).toEqual([]);
+  });
+
+  it("lists a hidden model only when asked for, selected, or starred", () => {
+    const hidden = {
+      isLegacy: false,
+      isHidden: true,
+      isDisplayed: false,
+      isFavorite: false,
+      showLegacy: false,
+      showHidden: false,
+    };
+
+    expect(modelIsListed(hidden)).toBe(false);
+    expect(modelIsListed({ ...hidden, showLegacy: true })).toBe(false);
+    expect(modelIsListed({ ...hidden, showHidden: true })).toBe(true);
+    expect(modelIsListed({ ...hidden, isDisplayed: true })).toBe(true);
+    expect(modelIsListed({ ...hidden, isFavorite: true })).toBe(true);
+    // A hidden legacy model needs both toggles.
+    expect(modelIsListed({ ...hidden, isLegacy: true, showHidden: true })).toBe(false);
+    expect(modelIsListed({ ...hidden, isLegacy: true, showHidden: true, showLegacy: true })).toBe(
+      true,
+    );
   });
 
   it("matches visible model and provider terms", () => {

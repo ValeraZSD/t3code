@@ -10,15 +10,34 @@ export function modelFavoriteKey(provider: ProviderInstanceId, model: string): s
   return `${provider}:${model}`;
 }
 
-export function toggleModelFavorite(
-  favorites: ReadonlyArray<ModelFavorite>,
+/** Adds or removes a model in a device-local list: favorites or hidden models. */
+export function toggleModelEntry(
+  entries: ReadonlyArray<ModelFavorite>,
   option: ModelOption,
 ): ReadonlyArray<ModelFavorite> {
   const provider = option.selection.instanceId;
   const model = option.selection.model;
-  return favorites.some((favorite) => favorite.provider === provider && favorite.model === model)
-    ? favorites.filter((favorite) => favorite.provider !== provider || favorite.model !== model)
-    : [...favorites, { provider, model }];
+  return entries.some((entry) => entry.provider === provider && entry.model === model)
+    ? entries.filter((entry) => entry.provider !== provider || entry.model !== model)
+    : [...entries, { provider, model }];
+}
+
+/**
+ * Legacy and hidden models stay out of the catalog until the user asks for
+ * them. The model the picker shows as selected and favorites always stay, so
+ * hiding never strands the current pick or a starred model.
+ */
+export function modelIsListed(input: {
+  readonly isLegacy: boolean;
+  readonly isHidden: boolean;
+  readonly isDisplayed: boolean;
+  readonly isFavorite: boolean;
+  readonly showLegacy: boolean;
+  readonly showHidden: boolean;
+}): boolean {
+  if (input.isDisplayed || input.isFavorite) return true;
+  if (input.isHidden && !input.showHidden) return false;
+  return !input.isLegacy || input.showLegacy;
 }
 
 /** Keep catalog order within each group when favorites move to the front. */

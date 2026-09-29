@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, View, type PressableProps } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { cn } from "../../lib/cn";
@@ -12,8 +12,12 @@ export type ModelRowProps = {
   readonly isFavorite: boolean;
   readonly favoritesLoaded: boolean;
   readonly onToggleFavorite: () => void;
+  readonly isHidden?: boolean;
   readonly isFirst: boolean;
   readonly isLast: boolean;
+  // Injected by a long-press ControlPillMenu wrapped around the row.
+  readonly onLongPress?: PressableProps["onLongPress"];
+  readonly onTouchStart?: PressableProps["onTouchStart"];
 };
 
 export type ChoiceRowProps = {
@@ -56,7 +60,9 @@ export function ModelRowContent(
         }}
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
         disabled={props.option.isUnavailable}
+        onLongPress={props.onLongPress}
         onPress={props.onPress}
+        onTouchStart={props.onTouchStart}
       >
         {props.leadingSelection}
         <View className="min-w-0 flex-1">
@@ -75,6 +81,11 @@ export function ModelRowContent(
             {props.option.isLegacy ? (
               <View className="rounded-md bg-subtle px-1.5 py-0.5">
                 <Text className="text-3xs font-t3-bold text-foreground-muted">Legacy</Text>
+              </View>
+            ) : null}
+            {props.isHidden ? (
+              <View className="rounded-md bg-subtle px-1.5 py-0.5">
+                <Text className="text-3xs font-t3-bold text-foreground-muted">Hidden</Text>
               </View>
             ) : null}
             {props.option.isUnavailable ? (
