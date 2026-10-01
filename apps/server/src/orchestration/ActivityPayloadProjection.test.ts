@@ -368,6 +368,8 @@ describe("makeSupersededActivityFilter", () => {
       row("complete-b-other-turn", "tool.completed", "turn-2", { toolCallId: "b" }),
       row("context-2", "context-window.updated", "turn-1", { usedTokens: 20 }),
       row("context-malformed", "context-window.updated", "turn-1", { usedTokens: -1 }),
+      row("update-turnless", "tool.updated", null, { toolCallId: "c" }),
+      row("complete-turnless", "tool.completed", null, { toolCallId: "c" }),
     ];
     const isSuperseded = makeSupersededActivityFilter();
     const dropped = rows
@@ -375,6 +377,6 @@ describe("makeSupersededActivityFilter", () => {
       .filter(isSuperseded)
       .map((activity) => activity.id);
 
-    expect(dropped.toSorted()).toEqual(["context-1", "start-a", "update-a"]);
+    expect(dropped.toSorted()).toEqual(["context-1", "start-a", "update-a", "update-turnless"]);
   });
 });

@@ -3445,13 +3445,13 @@ pending_approval_requests AS (
         ),
       ),
     ]);
-    // Loads one batch of payloads in the order of its id rows.
+    // Loads one batch of raw payloads in the order of its id rows.
     const loadActivityBatch = (idRows: typeof activityIdRows) => {
       const activityIds = idRows.map(({ activityId }) => activityId);
       return listThreadActivityRowsByIds({ activityIds }).pipe(
         Effect.map((rows) => {
           const activitiesById = new Map(
-            rows.map((row) => [row.activityId, projectActivityPayload(mapThreadActivityRow(row))]),
+            rows.map((row) => [row.activityId, mapThreadActivityRow(row)]),
           );
           return activityIds.flatMap((activityId) => activitiesById.get(activityId) ?? []);
         }),
@@ -3467,6 +3467,8 @@ pending_approval_requests AS (
     // Walk newest first and skip rows a newer one supersedes, so the budget is
     // spent on rows the snapshot ships. Counting raw rows instead let one long
     // turn's lifecycle churn evict the tool calls behind its older messages.
+    // The filter reads only fields projection keeps, so skipped rows are never
+    // projected.
     const isSuperseded = makeSupersededActivityFilter();
     const activities: OrchestrationThreadActivity[] = [];
     for (
@@ -3480,7 +3482,7 @@ pending_approval_requests AS (
       );
       for (const activity of yield* loadActivityBatch(batch)) {
         if (activities.length >= THREAD_DETAIL_ACTIVITY_LIMIT) break;
-        if (!isSuperseded(activity)) activities.push(activity);
+        if (!isSuperseded(activity)) activities.push(projectActivityPayload(activity));
       }
     }
 
@@ -3494,7 +3496,7 @@ pending_approval_requests AS (
       offset += THREAD_DETAIL_ACTIVITY_PAYLOAD_BATCH_SIZE
     ) {
       const batch = pinnedIdRows.slice(offset, offset + THREAD_DETAIL_ACTIVITY_PAYLOAD_BATCH_SIZE);
-      activities.push(...(yield* loadActivityBatch(batch)));
+      activities.push(...(yield* loadActivityBatch(batch)).map(projectActivityPayload));
     }
 
     return activities.toSorted(
