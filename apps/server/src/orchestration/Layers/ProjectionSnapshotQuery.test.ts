@@ -3017,13 +3017,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         assert.equal(fullDetail.value.activities.at(-1)?.id, asEventId("activity-0501"));
       }
 
+      // Client snapshots skip the superseded update (0002) and context window
+      // (0003) instead of spending the budget on them, so they reach 0001.
       const windowedDetail = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
         turnLimit: 2,
       });
       assert.equal(windowedDetail._tag, "Some");
       if (windowedDetail._tag === "Some") {
-        assert.equal(windowedDetail.value.thread.activities.length, 500);
-        assert.equal(windowedDetail.value.thread.activities[0]?.id, asEventId("activity-0002"));
+        assert.equal(windowedDetail.value.thread.activities.length, 499);
+        assert.equal(windowedDetail.value.thread.activities[0]?.id, asEventId("activity-0001"));
+        assert.equal(windowedDetail.value.thread.activities[1]?.id, asEventId("activity-0004"));
         assert.equal(windowedDetail.value.thread.activities.at(-1)?.id, asEventId("activity-0501"));
       }
 
@@ -3099,7 +3102,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         const ids = new Set(
           windowWithPinnedRequests.value.thread.activities.map((activity) => activity.id),
         );
-        assert.equal(windowWithPinnedRequests.value.thread.activities.length, 503);
+        assert.equal(windowWithPinnedRequests.value.thread.activities.length, 502);
         assert.equal(ids.has(asEventId("approval-old")), true);
         assert.equal(ids.has(asEventId("user-input-old")), true);
         assert.equal(ids.has(asEventId("user-input-closed")), false);
@@ -3113,16 +3116,22 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         fullSnapshot._tag === "Some" &&
         windowWithPinnedRequests._tag === "Some"
       ) {
-        const projectedFullSnapshot = projectThreadDetailSnapshot(fullSnapshot.value);
-        const projectedRawBaseline = projectThreadDetailSnapshot({
-          snapshotSequence: fullSnapshot.value.snapshotSequence,
-          thread: detailWithPinnedRequests.value,
-        });
-        assert.deepStrictEqual(projectedFullSnapshot, projectedRawBaseline);
-
+        // Paged client reads project payloads exactly as the raw path does.
         const rawActivitiesById = new Map(
           detailWithPinnedRequests.value.activities.map((activity) => [activity.id, activity]),
         );
+        const projectedFullSnapshot = projectThreadDetailSnapshot(fullSnapshot.value);
+        const projectedRawBaseline = projectThreadDetailSnapshot({
+          snapshotSequence: fullSnapshot.value.snapshotSequence,
+          thread: {
+            ...detailWithPinnedRequests.value,
+            activities: fullSnapshot.value.thread.activities.map(
+              (activity) => rawActivitiesById.get(activity.id) ?? activity,
+            ),
+          },
+        });
+        assert.deepStrictEqual(projectedFullSnapshot, projectedRawBaseline);
+
         const projectedWindowSnapshot = projectThreadDetailSnapshot(windowWithPinnedRequests.value);
         const projectedWindowBaseline = projectThreadDetailSnapshot({
           ...windowWithPinnedRequests.value,
@@ -3158,6 +3167,86 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
           },
         });
       }
+    }),
+  );
+
+  it.effect("spends the activity budget on rows the client snapshot ships", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      // One long turn: each call is a start, two updates and a completion.
+      const insertCalls = (firstCall: number, callCount: number, firstSequence: number) => sql`
+        WITH RECURSIVE activity_rows(n) AS (
+          SELECT 0
+          UNION ALL
+          SELECT n + 1 FROM activity_rows WHERE n < ${callCount * 4 - 1}
+        )
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        )
+        SELECT
+          printf('call-%03d-%d', ${firstCall} + n / 4, n % 4),
+          'thread-w',
+          'turn-5',
+          'tool',
+          CASE n % 4
+            WHEN 0 THEN 'tool.started'
+            WHEN 3 THEN 'tool.completed'
+            ELSE 'tool.updated'
+          END,
+          'Ran command',
+          json_object(
+            'itemType', 'command_execution',
+            'toolCallId', printf('call-%03d', ${firstCall} + n / 4)
+          ),
+          ${firstSequence} + n,
+          '2026-03-01T00:04:00.000Z'
+        FROM activity_rows
+      `;
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* insertCalls(0, 300, 1);
+      // Still in flight: a start reusing a finished call's id, and an update
+      // with no completion. Neither is superseded.
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        )
+        VALUES
+          ('restart-call-000', 'thread-w', 'turn-5', 'tool', 'tool.started', 'Ran command',
+            '{"itemType":"command_execution","toolCallId":"call-000"}', 1201,
+            '2026-03-01T00:04:00.000Z'),
+          ('live-call', 'thread-w', 'turn-5', 'tool', 'tool.updated', 'Ran command',
+            '{"itemType":"command_execution","toolCallId":"live-call"}', 1202,
+            '2026-03-01T00:04:00.000Z')
+      `;
+
+      for (const window of [undefined, { turnLimit: 1 }]) {
+        const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW, window);
+        assert.equal(snapshot._tag, "Some");
+        if (snapshot._tag !== "Some") return;
+        assert.equal(snapshot.value.thread.activities.length, 302);
+        assert.equal(
+          snapshot.value.thread.activities.filter((activity) => activity.kind === "tool.completed")
+            .length,
+          300,
+        );
+        assert.equal(snapshot.value.thread.activities[0]?.id, asEventId("call-000-3"));
+        assert.deepStrictEqual(
+          snapshot.value.thread.activities.slice(-2).map((activity) => activity.id),
+          [asEventId("restart-call-000"), asEventId("live-call")],
+        );
+      }
+
+      // Past the budget, the newest 500 shipped rows are kept.
+      yield* insertCalls(300, 300, 1301);
+      const capped = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 1 });
+      assert.equal(capped._tag, "Some");
+      if (capped._tag !== "Some") return;
+      assert.equal(capped.value.thread.activities.length, 500);
+      assert.equal(capped.value.thread.activities[0]?.id, asEventId("call-102-3"));
     }),
   );
 

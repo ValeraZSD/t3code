@@ -67,7 +67,10 @@ import {
   decodeThreadDetailPageCursor,
   encodeThreadDetailPageCursor,
 } from "../threadDetailCursor.ts";
-import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
+import {
+  makeSupersededActivityFilter,
+  projectActivityPayload,
+} from "../ActivityPayloadProjection.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
@@ -91,10 +94,15 @@ const decodeImportedTranscriptsPayload = Schema.decodeUnknownOption(
   ),
 );
 const decodeAgentSessionImportSource = Schema.decodeUnknownOption(AgentSessionImportSource);
-// Keep detail reads consistent with the in-memory projector's retained
-// activity window. Applying the limit in SQL avoids decoding an unbounded
-// payload_json set before the projector can enforce that invariant.
+// Raw detail reads keep the in-memory projector's retained activity window.
+// Applying the limit in SQL avoids decoding an unbounded payload_json set
+// before the projector can enforce that invariant. Client snapshots ship the
+// same number of rows but skip superseded ones, so they scan further back.
 const THREAD_DETAIL_ACTIVITY_LIMIT = 500;
+// How far back a client snapshot scans for unsuperseded rows. A completed tool
+// call is typically a start, a few updates and a completion, of which only the
+// completion ships.
+const THREAD_DETAIL_ACTIVITY_SCAN_LIMIT = 5 * THREAD_DETAIL_ACTIVITY_LIMIT;
 // Snapshot payloads are decoded and projected in small sequential batches so
 // one client read does not retain the raw payloads for the full activity window.
 const THREAD_DETAIL_ACTIVITY_PAYLOAD_BATCH_SIZE = 25;
@@ -1585,7 +1593,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sequence DESC,
           created_at DESC,
           activity_id DESC
-        LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
+        LIMIT ${THREAD_DETAIL_ACTIVITY_SCAN_LIMIT}
       `,
   });
 
@@ -2071,7 +2079,7 @@ pending_approval_requests AS (
           sequence DESC,
           created_at DESC,
           activity_id DESC
-        LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
+        LIMIT ${THREAD_DETAIL_ACTIVITY_SCAN_LIMIT}
       `,
   });
 
@@ -3437,21 +3445,16 @@ pending_approval_requests AS (
         ),
       ),
     ]);
-    const activityIds = [
-      ...new Set([...activityIdRows, ...pinnedActivityIdRows].map(({ activityId }) => activityId)),
-    ];
-    const activities: OrchestrationThreadActivity[] = [];
-
-    for (
-      let offset = 0;
-      offset < activityIds.length;
-      offset += THREAD_DETAIL_ACTIVITY_PAYLOAD_BATCH_SIZE
-    ) {
-      const batchIds = activityIds.slice(
-        offset,
-        offset + THREAD_DETAIL_ACTIVITY_PAYLOAD_BATCH_SIZE,
-      );
-      const batchRows = yield* listThreadActivityRowsByIds({ activityIds: batchIds }).pipe(
+    // Loads one batch of payloads in the order of its id rows.
+    const loadActivityBatch = (idRows: typeof activityIdRows) => {
+      const activityIds = idRows.map(({ activityId }) => activityId);
+      return listThreadActivityRowsByIds({ activityIds }).pipe(
+        Effect.map((rows) => {
+          const activitiesById = new Map(
+            rows.map((row) => [row.activityId, projectActivityPayload(mapThreadActivityRow(row))]),
+          );
+          return activityIds.flatMap((activityId) => activitiesById.get(activityId) ?? []);
+        }),
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
             "ProjectionSnapshotQuery.getThreadDetailById:listActivityPayloadBatch:query",
@@ -3459,9 +3462,39 @@ pending_approval_requests AS (
           ),
         ),
       );
-      for (const row of batchRows) {
-        activities.push(projectActivityPayload(mapThreadActivityRow(row)));
+    };
+
+    // Walk newest first and skip rows a newer one supersedes, so the budget is
+    // spent on rows the snapshot ships. Counting raw rows instead let one long
+    // turn's lifecycle churn evict the tool calls behind its older messages.
+    const isSuperseded = makeSupersededActivityFilter();
+    const activities: OrchestrationThreadActivity[] = [];
+    for (
+      let offset = 0;
+      offset < activityIdRows.length && activities.length < THREAD_DETAIL_ACTIVITY_LIMIT;
+      offset += THREAD_DETAIL_ACTIVITY_PAYLOAD_BATCH_SIZE
+    ) {
+      const batch = activityIdRows.slice(
+        offset,
+        offset + THREAD_DETAIL_ACTIVITY_PAYLOAD_BATCH_SIZE,
+      );
+      for (const activity of yield* loadActivityBatch(batch)) {
+        if (activities.length >= THREAD_DETAIL_ACTIVITY_LIMIT) break;
+        if (!isSuperseded(activity)) activities.push(activity);
       }
+    }
+
+    const loadedIds = new Set(activities.map((activity) => activity.id));
+    const pinnedIdRows = pinnedActivityIdRows.filter(
+      ({ activityId }) => !loadedIds.has(activityId),
+    );
+    for (
+      let offset = 0;
+      offset < pinnedIdRows.length;
+      offset += THREAD_DETAIL_ACTIVITY_PAYLOAD_BATCH_SIZE
+    ) {
+      const batch = pinnedIdRows.slice(offset, offset + THREAD_DETAIL_ACTIVITY_PAYLOAD_BATCH_SIZE);
+      activities.push(...(yield* loadActivityBatch(batch)));
     }
 
     return activities.toSorted(

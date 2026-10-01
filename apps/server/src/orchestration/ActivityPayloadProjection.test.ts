@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
-import { projectActivityPayload } from "./ActivityPayloadProjection.ts";
+import {
+  makeSupersededActivityFilter,
+  projectActivityPayload,
+} from "./ActivityPayloadProjection.ts";
 
 function activity(payload: Record<string, unknown>): OrchestrationThreadActivity {
   return {
@@ -342,5 +345,36 @@ describe("projectActivityPayload", () => {
     });
     const projected = projectActivityPayload(source);
     expect(projected.payload).toEqual(source.payload);
+  });
+});
+
+describe("makeSupersededActivityFilter", () => {
+  const row = (
+    id: string,
+    kind: string,
+    turnId: string | null,
+    payload: Record<string, unknown>,
+  ): OrchestrationThreadActivity =>
+    ({ ...activity(payload), id, kind, turnId }) as OrchestrationThreadActivity;
+
+  it("drops only rows a later row in the same turn supersedes", () => {
+    const rows = [
+      row("start-a", "tool.started", "turn-1", { toolCallId: "a" }),
+      row("update-a", "tool.updated", "turn-1", { toolCallId: "a" }),
+      row("context-1", "context-window.updated", "turn-1", { usedTokens: 10 }),
+      row("complete-a", "tool.completed", "turn-1", { toolCallId: "a" }),
+      row("restart-a", "tool.started", "turn-1", { toolCallId: "a" }),
+      row("update-b", "tool.updated", "turn-1", { toolCallId: "b" }),
+      row("complete-b-other-turn", "tool.completed", "turn-2", { toolCallId: "b" }),
+      row("context-2", "context-window.updated", "turn-1", { usedTokens: 20 }),
+      row("context-malformed", "context-window.updated", "turn-1", { usedTokens: -1 }),
+    ];
+    const isSuperseded = makeSupersededActivityFilter();
+    const dropped = rows
+      .toReversed()
+      .filter(isSuperseded)
+      .map((activity) => activity.id);
+
+    expect(dropped.toSorted()).toEqual(["context-1", "start-a", "update-a"]);
   });
 });

@@ -516,37 +516,6 @@ function isResolvableContextWindowActivity(activity: OrchestrationThreadActivity
 }
 
 /**
- * Drops all but the last resolvable context-window activity per turn from a
- * snapshot. Clients only ever read the latest usage value (walking the array
- * backwards), so shipping the full history — often thousands of rows on long
- * threads — buys nothing. Retention is per turn rather than per thread because
- * a live `thread.reverted` makes the client discard whole turns; keeping each
- * turn's latest row means the meter can still resolve a value from the turns
- * that survive. Malformed rows pass through untouched rather than shadowing a
- * valid earlier row. Live `thread.activity-appended` events are untouched:
- * newer updates still stream through and supersede the retained rows on the
- * client.
- */
-function dropStaleContextWindowActivities(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): ReadonlyArray<OrchestrationThreadActivity> {
-  const latestIndexByTurn = new Map<string | null, number>();
-  for (let index = 0; index < activities.length; index += 1) {
-    if (isResolvableContextWindowActivity(activities[index]!)) {
-      latestIndexByTurn.set(activities[index]!.turnId, index);
-    }
-  }
-  if (latestIndexByTurn.size === 0) {
-    return activities;
-  }
-  return activities.filter(
-    (activity, index) =>
-      !isResolvableContextWindowActivity(activity) ||
-      latestIndexByTurn.get(activity.turnId) === index,
-  );
-}
-
-/**
  * Identity used to retain only the newest lifecycle row for each call in a
  * thread snapshot. Prefer the runtime item id, then the legacy nested id, and
  * finally the itemType/title/detail triple. Rows without any identity remain
@@ -578,25 +547,31 @@ function toolLifecycleIdentity(activity: OrchestrationThreadActivity): string | 
 }
 
 /**
- * Drops `tool.updated` rows a `tool.completed` row already supersedes. An
- * update is the in-flight snapshot of a call; once the call completes, the
- * completion carries the final state and the clients fold every matching
- * update into it, so shipping the updates buys nothing — 47k such rows exist
- * in one real database, and a single thread carries 2,291 of them totalling
- * ~1MB post-slimming.
+ * Returns a predicate that, fed a thread's activities newest first, answers
+ * whether a later row already supersedes each one, so a snapshot can leave it
+ * out. Snapshot readers walk backwards with it to spend their row budget only
+ * on rows they ship.
  *
- * Matching is per turn for the same reason `dropStaleContextWindowActivities`
- * retains per turn: a live `thread.reverted` makes the client discard whole
- * turns, so a completion in a different turn could vanish and leave the
- * dropped update unrepresented. The completion must also come *after* the
- * update within the turn — a later update belongs to a subsequent call that
- * reuses the same identity and is still in flight. Rows without a lifecycle
- * identity pass through, matching the clients, which never collapse them.
- * Deliberate divergence from client collapse: clients fold only *adjacent*
- * lifecycle rows, so a superseded update separated from its completion by an
+ * Context windows: all but the last resolvable row per turn. Clients only ever
+ * read the latest usage value (walking the array backwards), so shipping the
+ * full history — often thousands of rows on long threads — buys nothing.
+ * Malformed rows pass through untouched rather than shadowing a valid earlier
+ * row.
+ *
+ * Tool lifecycles: `tool.started` and `tool.updated` rows a later
+ * `tool.completed` with the same identity supersedes. Clients never render
+ * `tool.started`, and an update is the in-flight snapshot of a call; once the
+ * call completes, the completion carries the final state and the clients fold
+ * every matching update into it — 47k such updates exist in one real database,
+ * and a single thread carries 2,291 of them totalling ~1MB post-slimming. A
+ * later start or update belongs to a subsequent call that reuses the same
+ * identity and is still in flight. Rows without a lifecycle identity pass
+ * through, matching the clients, which never collapse them. Deliberate
+ * divergence from client collapse: clients fold only *adjacent* lifecycle
+ * rows, so a superseded update separated from its completion by an
  * interleaved parallel call renders as its own row today, and this drop
  * removes it. Measured against a real database, that affects 1.5% of dropped
- * rows (553 of 36,581), all pure in-flight state whose final result the
+ * updates (553 of 36,581), all pure in-flight state whose final result the
  * retained completion still shows. Dropping them is intentional; matching
  * adjacency server-side would forfeit most of the win for parallel-heavy
  * threads, which are exactly the heavy ones. Superseding completions always
@@ -604,43 +579,50 @@ function toolLifecycleIdentity(activity: OrchestrationThreadActivity): string | 
  * update rows: zero dropped rows held a client-merged field — detail, title,
  * command, item, kind, files — their completion lacked), so no expanded-row
  * content is lost.
+ *
+ * Both rules match per turn because a live `thread.reverted` makes the client
+ * discard whole turns: a superseding row in another turn could vanish and
+ * leave the dropped row unrepresented. Live `thread.activity-appended` events
+ * are untouched; they stream through and supersede on the client.
  */
-function dropSupersededToolUpdatedActivities(
+export function makeSupersededActivityFilter(): (activity: OrchestrationThreadActivity) => boolean {
+  const turnsWithLaterContextWindow = new Set<string | null>();
+  const laterCompletionKeys = new Set<string>();
+  return (activity) => {
+    if (isResolvableContextWindowActivity(activity)) {
+      if (turnsWithLaterContextWindow.has(activity.turnId)) return true;
+      turnsWithLaterContextWindow.add(activity.turnId);
+      return false;
+    }
+    if (
+      activity.kind !== "tool.started" &&
+      activity.kind !== "tool.updated" &&
+      activity.kind !== "tool.completed"
+    ) {
+      return false;
+    }
+    const identity = toolLifecycleIdentity(activity);
+    if (!identity) return false;
+    const key = `${activity.turnId ?? ""}\u0000${identity}`;
+    if (activity.kind === "tool.completed") {
+      laterCompletionKeys.add(key);
+      return false;
+    }
+    return laterCompletionKeys.has(key);
+  };
+}
+
+function dropSupersededActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): ReadonlyArray<OrchestrationThreadActivity> {
-  const completionIndicesByKey = new Map<string, number[]>();
-  for (let index = 0; index < activities.length; index += 1) {
-    const activity = activities[index]!;
-    if (activity.kind !== "tool.completed") {
-      continue;
-    }
-    const identity = toolLifecycleIdentity(activity);
-    if (!identity) {
-      continue;
-    }
-    const key = `${activity.turnId ?? ""}\u0000${identity}`;
-    const indices = completionIndicesByKey.get(key);
-    if (indices) {
-      indices.push(index);
-    } else {
-      completionIndicesByKey.set(key, [index]);
-    }
+  const isSuperseded = makeSupersededActivityFilter();
+  const superseded = new Set<OrchestrationThreadActivity>();
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    if (isSuperseded(activities[index]!)) superseded.add(activities[index]!);
   }
-  if (completionIndicesByKey.size === 0) {
-    return activities;
-  }
-
-  return activities.filter((activity, index) => {
-    if (activity.kind !== "tool.updated") {
-      return true;
-    }
-    const identity = toolLifecycleIdentity(activity);
-    if (!identity) {
-      return true;
-    }
-    const indices = completionIndicesByKey.get(`${activity.turnId ?? ""}\u0000${identity}`);
-    return !indices?.some((completionIndex) => completionIndex > index);
-  });
+  return superseded.size === 0
+    ? activities
+    : activities.filter((activity) => !superseded.has(activity));
 }
 
 export function projectThreadDetailSnapshot(
@@ -656,9 +638,7 @@ export function projectThreadDetailSnapshot(
         : snapshot.thread.messages.map((message) =>
             message.role === "reasoning" ? { ...message, role: "system" as const } : message,
           ),
-      activities: dropSupersededToolUpdatedActivities(
-        dropStaleContextWindowActivities(snapshot.thread.activities),
-      ).map(projectActivityPayload),
+      activities: dropSupersededActivities(snapshot.thread.activities).map(projectActivityPayload),
     },
   };
 }
