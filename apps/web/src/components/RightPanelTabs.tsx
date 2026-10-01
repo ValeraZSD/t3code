@@ -26,6 +26,7 @@ import {
   TerminalSquare,
   Volume2,
   VolumeOff,
+  X,
 } from "lucide-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -108,6 +109,8 @@ interface RightPanelTabsProps {
   onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
+  /** Closes the whole panel; offered from the launcher, which has no tab to close. */
+  onClosePanel?: () => void;
   onCopyFilePath: (relativePath: string) => void;
   onAddBrowser: () => void;
   /**
@@ -1128,6 +1131,24 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           data-right-panel-tab-list
         >
           <div className="flex h-full w-max min-w-full items-center gap-1">
+            {props.activeSurfaceId === null && props.onClosePanel ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label="Close panel"
+                      className="shrink-0"
+                      onClick={props.onClosePanel}
+                      size="icon-xs"
+                      variant="ghost-muted"
+                    />
+                  }
+                >
+                  <X className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipPopup>Close panel</TooltipPopup>
+              </Tooltip>
+            ) : null}
             {props.surfaces.map((surface) => {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);

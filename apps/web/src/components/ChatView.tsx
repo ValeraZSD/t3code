@@ -6799,10 +6799,14 @@ export default function ChatView(props: ChatViewProps) {
       if (command === "rightPanel.close") {
         // Nothing open: leave the event alone so the shortcut keeps its
         // native meaning (close window on desktop, close tab in a browser).
-        if (!activeRightPanelSurface) return;
+        // An open panel without a surface shows the launcher, which closes
+        // like the last tab would.
+        if (!activeRightPanelSurface && !rightPanelOpen) return;
         event.preventDefault();
         event.stopPropagation();
-        if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
+        if (event.repeat) return;
+        if (activeRightPanelSurface) closeRightPanelSurface(activeRightPanelSurface);
+        else closePreviewPanel();
         return;
       }
 
@@ -6944,7 +6948,9 @@ export default function ChatView(props: ChatViewProps) {
     terminalUiState.terminalOpen,
     terminalUiState.activeTerminalId,
     activeThreadId,
+    closePreviewPanel,
     closeRightPanelSurface,
+    rightPanelOpen,
     requestCloseTerminal,
     requestClosePanelTerminal,
     createNewTerminal,
@@ -10278,6 +10284,7 @@ export default function ChatView(props: ChatViewProps) {
           onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
           onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
           onCloseAllSurfaces={closeAllRightPanelSurfaces}
+          onClosePanel={closePreviewPanel}
           onCopyFilePath={copyRightPanelFilePath}
           onAddBrowser={() => createBrowserSurface()}
           onAddBrowserInProfile={createBrowserSurface}
@@ -10335,6 +10342,7 @@ export default function ChatView(props: ChatViewProps) {
             onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
             onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
             onCloseAllSurfaces={closeAllRightPanelSurfaces}
+            onClosePanel={closePreviewPanel}
             onCopyFilePath={copyRightPanelFilePath}
             onAddBrowser={() => createBrowserSurface()}
             onAddBrowserInProfile={createBrowserSurface}
