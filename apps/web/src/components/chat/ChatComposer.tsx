@@ -58,6 +58,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -245,7 +246,11 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
-import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
+import {
+  type ComposerCommandItem,
+  ComposerCommandMenu,
+  composerSuggestionOptionId,
+} from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
@@ -978,6 +983,7 @@ import {
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
+import { useDelayedStatus } from "../../hooks/useDelayedStatus";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -1579,8 +1585,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onFileOpen,
   } = props;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
-  const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;
+  const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
+  // Opening a running thread resyncs for a few frames. Show the sync row, and
+  // hide the tasks row for it, only when the sync lasts. Logic that depends on
+  // the real phase keeps reading `props.threadSyncPhase`.
+  const shownSyncPhase = useDelayedStatus(composerDraftTargetKey, props.threadSyncPhase);
+  const activeTasksProgress = shownSyncPhase === null ? props.activeTasksProgress : null;
+  const activeTaskSteps = shownSyncPhase === null ? props.activeTaskSteps : null;
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
   // ------------------------------------------------------------------
@@ -1588,7 +1599,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Live target key, for async flows that must notice a thread switch that
   // happened while they awaited.
   const composerDraftTargetKeyRef = useRef("");
-  composerDraftTargetKeyRef.current = composerTargetKey(composerDraftTarget);
+  composerDraftTargetKeyRef.current = composerDraftTargetKey;
   const questionAttachmentTarget =
     pendingUserInputs[0] && activePendingProgress?.activeQuestion
       ? questionAttachmentDraftId(
@@ -2103,6 +2114,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     resetTrigger: resetComposerTrigger,
   } = useComposerTriggerState(() => detectComposerTrigger(prompt, prompt.length));
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
+  const composerSuggestionId = useId();
+  const composerSuggestionListId = `${composerSuggestionId}-${encodeURIComponent(draftId ?? activeThreadId ?? "new")}-suggestions`;
   // Active ArrowUp recall. Cleared on edit and on thread switch.
   const promptHistoryPositionRef = useRef<ComposerPromptHistoryPosition | null>(null);
   const [composerHighlightedSearchKey, setComposerHighlightedSearchKey] = useState<string | null>(
@@ -2497,7 +2510,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
-    ? `${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
+    ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
     : null;
   const activeComposerMenuItem = useMemo(() => {
     const activeItemId = resolveComposerMenuActiveItemId({
@@ -2524,6 +2537,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const isComposerApprovalState = activePendingApproval !== null;
+  const composerSuggestionsVisible = composerMenuOpen && !isComposerApprovalState;
+  const composerSuggestionListVisible = composerSuggestionsVisible && composerMenuItems.length > 0;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
@@ -3171,6 +3186,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   useEffect(() => {
     setComposerHighlightedItemId(null);
+    setComposerHighlightedSearchKey(null);
     setComposerSubmissionError(null);
     setProviderInputSubmissionError(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
@@ -5152,8 +5168,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeTaskSteps !== null &&
     activeTasksProgress.totalSteps > 0;
   const activityStackContent = hasBannerItems ? (
-    props.threadSyncPhase ? (
-      <ComposerActivityRow phase={props.threadSyncPhase} />
+    shownSyncPhase ? (
+      <ComposerActivityRow phase={shownSyncPhase} />
     ) : !hasBlockingComposerTopDrawer && activeTasksProgress && activeTaskSteps ? (
       <ComposerTasksContent
         expanded={isTasksDrawerOpen}
@@ -6160,7 +6176,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (isInsideRestingComposerControlScope(event.target)) return;
         composerMentionDragHandlers.onDrop(event);
       }}
-      className="mx-auto w-full min-w-0 max-w-3xl"
+      className="mx-auto w-full min-w-0 max-w-(--chat-max-width)"
       data-chat-composer-form="true"
     >
       {composerControlsInStrip && restingControlsHost
@@ -6187,14 +6203,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             className="relative z-0"
             items={bannerStackItems}
           />
-          {!activityStackItem && (props.threadSyncPhase || inlineTasksBadge) ? (
+          {!activityStackItem && (shownSyncPhase || inlineTasksBadge) ? (
             <ComposerBanner.Attachment>
               <ComposerBanner.Root data-chat-composer-activity-strip="true">
-                {props.threadSyncPhase ? (
-                  <ComposerActivityRow phase={props.threadSyncPhase} />
-                ) : (
-                  inlineTasksBadge
-                )}
+                {shownSyncPhase ? <ComposerActivityRow phase={shownSyncPhase} /> : inlineTasksBadge}
               </ComposerBanner.Root>
             </ComposerBanner.Attachment>
           ) : null}
@@ -6402,7 +6414,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <button
                   type="button"
                   data-chat-composer-transition-actions="true"
-                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-30"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-64"
                   disabled={collapsedComposerPrimaryActionDisabled}
                   aria-label={collapsedComposerPrimaryActionLabel}
                   onPointerDown={(event) => event.preventDefault()}
@@ -6453,9 +6465,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 </ComposerCommandMenuLayer>
               )}
 
-              {composerMenuOpen && !isComposerApprovalState && (
+              <div role="status" aria-atomic="true" className="sr-only">
+                {composerSuggestionsVisible && composerMenuItems.length === 0
+                  ? isComposerMenuLoading
+                    ? composerTriggerKind === "pull-request"
+                      ? "Finding pull request..."
+                      : "Searching workspace files..."
+                    : composerMenuEmptyState
+                  : ""}
+              </div>
+              {composerSuggestionsVisible && (
                 <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                   <ComposerCommandMenu
+                    listId={composerSuggestionListId}
                     items={composerMenuItems}
                     resolvedTheme={resolvedTheme}
                     isLoading={isComposerMenuLoading}
@@ -6844,6 +6866,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 ) : null}
                 <ComposerContextActionsContext value={composerContextActions}>
                   <ComposerPromptEditor
+                    ariaLabel="Message"
+                    suggestionListId={composerSuggestionListId}
+                    activeSuggestionId={
+                      composerSuggestionListVisible && activeComposerMenuItem
+                        ? composerSuggestionOptionId(
+                            composerSuggestionListId,
+                            activeComposerMenuItem.id,
+                          )
+                        : undefined
+                    }
                     editorRef={composerEditorRef}
                     richTextEnabled={settings.composerRichTextEnabled}
                     value={
