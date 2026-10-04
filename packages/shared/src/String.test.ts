@@ -18,9 +18,18 @@ describe("truncate", () => {
 
   it("never cuts a ZWJ emoji sequence in half", () => {
     const family = "👨‍👩‍👧‍👦";
-    expect(truncate(`${family} x`, 4)).toBe("👨...");
-    expect(truncate(`${family} x`, 6)).toBe("👨‍👩...");
-    expect(truncate(`${family} x`, 11)).toBe(`${family}...`);
+    expect(truncate(`${family} x`, 4)).toBe("...");
+    expect(truncate(`${family} x`, 6)).toBe("...");
+    expect(truncate(`ab${family} x`, 13)).toBe(`ab${family}...`);
+    expect(truncate(`ab${family} x`, 12)).toBe("ab...");
+  });
+
+  it("keeps a skin tone, variation selector or combining mark with its base", () => {
+    expect(truncate("abc👍🏽 z", 5)).toBe("abc...");
+    expect(truncate("abc👍🏽 z", 7)).toBe("abc👍🏽...");
+    expect(truncate("abc❤️ z", 4)).toBe("abc...");
+    expect(truncate("abc1️⃣ z", 5)).toBe("abc...");
+    expect(truncate("cafe\u0301 au lait", 4)).toBe("caf...");
   });
 
   it("never splits a flag emoji", () => {
